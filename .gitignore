@@ -1,0 +1,43 @@
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Sensitive config (use .example templates instead)
+# 注：js/config.js 现已纳入仓库 —— apiBase(/exec 网址) 是公开的(浏览器本来就可见)，
+#     便于静态托管(Netlify/Pages)自动部署。真正的密钥都在后端 GAS，不在前端。
+backend/.clasp.json
+
+# Build / deploy artifacts
+dist/
+
+# Cloudflare Worker —— 私钥与本地配置绝不入仓库
+worker/node_modules/
+worker/.wrangler/
+worker/.dev.vars
+worker/.dev.vars.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Log
+*.log
+
+# 测试截图产物（不入仓库）
+smoke-shots/
+smoke-full-shots/
+smoke-notify-shots/
+smoke-deep-shots/
+test-*.png
+
+smoke-legal-shots/

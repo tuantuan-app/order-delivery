@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>团团 · 商家后台</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles-crm.css" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#10b981" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="团团商家" />
+  <script src="vendor/vue.global.prod.js"></script>
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- 商家端：登录后管理自己的店。含「预览客户端」所以也加载客户端脚本 -->
+  <script>window.APP_MODE = 'merchant';</script>
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/notify.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/student.js"></script>
+  <script src="js/merchant-ringer.js"></script>
+  <script src="js/merchant.js"></script>
+  <script src="js/merchant-crm.js"></script>
+  <script src="js/contact.js"></script>
+  <script src="js/console.js"></script>
+  <script src="js/main.js"></script>
+  <footer class="app-footer">
+    <a href="/privacy.html">隐私政策</a><span class="app-footer__sep">·</span><a href="/terms.html">使用条款</a><span class="app-footer__sep">·</span><a href="mailto:nihaotuantuan@gmail.com">联系平台</a>
+    <div style="margin-top:4px">© 2026 团团 · v1.0</div>
+  </footer>
+</body>
+</html>

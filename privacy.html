@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>隐私政策 · 团团</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#10b981" />
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           max-width: 720px; margin: 0 auto; padding: 24px 16px 80px;
+           color: #111827; line-height: 1.7; background: #f9fafb; }
+    h1 { font-size: 24px; margin: 0 0 8px; color: #10b981; }
+    h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #e5e7eb; }
+    h3 { font-size: 15px; margin: 18px 0 6px; color: #374151; }
+    .meta { color: #6b7280; font-size: 13px; margin-bottom: 24px; }
+    .nav { position: sticky; top: 0; background: #f9fafb; padding: 8px 0;
+           border-bottom: 1px solid #e5e7eb; margin-bottom: 16px; z-index: 10; }
+    .nav a { color: #10b981; text-decoration: none; font-size: 14px; }
+    .nav a:hover { text-decoration: underline; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+    table th, table td { padding: 8px 10px; border: 1px solid #e5e7eb; text-align: left; }
+    table th { background: #f3f4f6; }
+    .lang-divider { margin: 40px 0; padding: 16px 0; border-top: 2px dashed #d1d5db;
+                    text-align: center; color: #6b7280; font-size: 13px; }
+    .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e7eb;
+              color: #6b7280; font-size: 12px; text-align: center; }
+    .footer a { color: #10b981; text-decoration: none; margin: 0 8px; }
+    ul, ol { padding-left: 22px; }
+    li { margin: 4px 0; }
+    code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 13px; }
+    .badge { display: inline-block; padding: 2px 8px; background: #d1fae5;
+             color: #065f46; border-radius: 12px; font-size: 11px; margin-left: 6px; }
+  </style>
+</head>
+<body>
+  <div class="nav">← <a href="javascript:history.back()">返回</a> · <a href="/">首页</a> · <a href="/terms.html">使用条款</a></div>
+
+  <h1>隐私政策 <span class="badge">PDPA 合规</span></h1>
+  <div class="meta">最后更新：2026-05-31 · 版本 v1.0 · 受马来西亚《2010 年个人资料保护法》管辖</div>
+
+  <h2>1. 我们是谁</h2>
+  <p>"团团" 是一个连接本地小型餐饮商家与社区消费者（如校园学生或宿舍居民）的订单聚合平台。</p>
+  <ul>
+    <li><b>运营者</b>：团团运营者（个人运营，未注册公司）</li>
+    <li><b>联系邮箱</b>：<a href="mailto:nihaotuantuan@gmail.com">nihaotuantuan@gmail.com</a></li>
+    <li><b>WhatsApp</b>：<a href="https://wa.me/60132831238" target="_blank" rel="noopener">013-283 1238</a></li>
+  </ul>
+
+  <h2>2. 我们收集什么个人资料</h2>
+  <p>当你作为客户使用本平台时，我们收集：</p>
+  <table>
+    <tr><th>资料</th><th>收集时机</th><th>用途</th></tr>
+    <tr><td>姓名</td><td>首次填写资料时</td><td>称呼你 + 显示在收据上</td></tr>
+    <tr><td>手机号</td><td>首次填写资料时</td><td>订单识别 + 商家联系</td></tr>
+    <tr><td>配送地址</td><td>首次填写资料时</td><td>配送路由</td></tr>
+    <tr><td>支付截图</td><td>每次下单时</td><td>给商家核对付款</td></tr>
+    <tr><td>订单历史</td><td>每次下单自动记录</td><td>状态追踪 + 复购</td></tr>
+    <tr><td>Web Push 订阅</td><td>当你允许通知时</td><td>发送订单状态通知</td></tr>
+    <tr><td>浏览器类型</td><td>订阅推送时</td><td>排查通知送达问题</td></tr>
+  </table>
+  <p><b>我们不收集</b>：信用卡号、MyKad、IP 追踪、GPS 位置、年龄/性别、社交账号、生物特征、平台外浏览历史。</p>
+
+  <h2>3. 你的数据存在哪里</h2>
+  <ul>
+    <li><b>Google Sheets</b>（Google LLC 运营）—— 订单 / 客户 / 商家数据</li>
+    <li><b>Google Drive</b>（Google LLC 运营）—— 支付截图</li>
+    <li><b>Cloudflare Workers</b>（Cloudflare Inc. 运营）—— 推送通知中转、读缓存，<b>不</b>做永久存储</li>
+    <li><b>你的浏览器 localStorage</b>—— 本地缓存，方便离线访问</li>
+  </ul>
+  <p>数据可能传输至马来西亚境外的服务器。使用本平台即表示你同意此类跨境传输。</p>
+
+  <h2>4. 谁能看到你的数据</h2>
+  <ul>
+    <li><b>你自己</b>—— 在平台 UI 中完全可见</li>
+    <li><b>你下单的商家</b>—— 仅看到姓名/电话/地址/菜品/支付截图，<b>仅供配送</b></li>
+    <li><b>平台运营者</b>—— 用于技术支持和纠纷处理</li>
+    <li><b>不会共享给</b>：广告商、第三方分析、政府（除法律强制）、任何不相关第三方</li>
+  </ul>
+
+  <h2>5. 数据保留多久</h2>
+  <table>
+    <tr><th>资料</th><th>保留时长</th></tr>
+    <tr><td>客户资料</td><td>直到你要求删除</td></tr>
+    <tr><td>订单记录</td><td>完成后 12 个月归档</td></tr>
+    <tr><td>支付截图</td><td>6 个月后删除</td></tr>
+    <tr><td>Web Push 订阅</td><td>取消或连续 5 次失败后清除</td></tr>
+    <tr><td>系统日志</td><td>滚动 30 天</td></tr>
+  </table>
+
+  <h2>6. 你的 PDPA 权利</h2>
+  <p>你有权：</p>
+  <ul>
+    <li><b>查看</b>—— 邮件给我们，21 天内回复</li>
+    <li><b>更正</b>—— app 内编辑或邮件给我们</li>
+    <li><b>删除</b>—— 邮件主题写「删除我的资料」+ 手机号</li>
+    <li><b>撤回同意</b>—— 浏览器关通知、停止使用</li>
+    <li><b>投诉</b>—— PDP 委员 <a href="https://www.pdp.gov.my/" target="_blank">pdp.gov.my</a></li>
+  </ul>
+
+  <h2>7. Cookies 和追踪</h2>
+  <p>我们<b>不使用</b>任何第三方追踪（Google Analytics、Facebook Pixel 等）。仅使用浏览器 localStorage 记住你的资料避免重复填写。</p>
+
+  <h2>8. 未成年人</h2>
+  <p>本平台面向 <b>18 岁以上</b>用户。未满 18 岁请在父母同意下使用。</p>
+
+  <h2>9. 政策变更</h2>
+  <p>我们可能更新本政策。「最后更新」日期反映变更，重大变更将通过 app 内横幅通知。收到通知后继续使用即视为同意。</p>
+
+  <h2>10. 联系</h2>
+  <p>任何隐私问题：<a href="mailto:nihaotuantuan@gmail.com">nihaotuantuan@gmail.com</a></p>
+
+  <div class="lang-divider">— English version below / 英文版见下方 —</div>
+
+  <h1>Privacy Policy</h1>
+  <div class="meta">Last updated: 2026-05-31 · v1.0 · Governed by Malaysia PDPA 2010</div>
+
+  <h2>1. Who we are</h2>
+  <p>"团团" (TuanTuan) is an order-aggregation platform connecting small food merchants with local consumers.</p>
+  <ul>
+    <li><b>Operator</b>: TuanTuan Operator (individual, not a registered company)</li>
+    <li><b>Email</b>: <a href="mailto:nihaotuantuan@gmail.com">nihaotuantuan@gmail.com</a> · <b>WhatsApp</b>: <a href="https://wa.me/60132831238" target="_blank" rel="noopener">013-283 1238</a></li>
+  </ul>
+
+  <h2>2. Data we collect</h2>
+  <p>Name, mobile phone, delivery address, payment screenshot, order history, push notification endpoint, browser user-agent.</p>
+  <p>We do <b>NOT</b> collect: card numbers, MyKad, IP tracking, GPS, age/gender, social login, biometrics.</p>
+
+  <h2>3. Where data is stored</h2>
+  <p>Google Sheets, Google Drive, Cloudflare Workers, your browser localStorage. Data may be transferred outside Malaysia.</p>
+
+  <h2>4. Who has access</h2>
+  <p>You, your merchant (for delivery only), and the Platform Operator (for support). Never shared with advertisers, analytics, or unrelated parties.</p>
+
+  <h2>5. Retention</h2>
+  <p>Profile: until deletion request. Orders: 12 months. Payment screenshots: 6 months. Push subscription: until unsubscribe.</p>
+
+  <h2>6. Your PDPA rights</h2>
+  <p>Access, correct, delete, withdraw consent, complain to PDP Commissioner.</p>
+
+  <h2>7. Cookies & tracking</h2>
+  <p>No third-party tracking. Browser localStorage only.</p>
+
+  <h2>8. Children</h2>
+  <p>Intended for users 18+.</p>
+
+  <h2>9. Changes</h2>
+  <p>Material changes notified via in-app banner.</p>
+
+  <h2>10. Contact</h2>
+  <p><a href="mailto:nihaotuantuan@gmail.com">nihaotuantuan@gmail.com</a></p>
+
+  <div class="footer">
+    <a href="/">首页 Home</a>
+    <a href="/terms.html">使用条款 Terms</a>
+    <a href="mailto:nihaotuantuan@gmail.com">联系 Contact</a>
+    <div style="margin-top:8px">© 2026 团团 TuanTuan · v1.0</div>
+  </div>
+</body>
+</html>

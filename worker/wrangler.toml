@@ -1,0 +1,28 @@
+name = "tuantuan-push"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+
+# 每小时自动健康检查（GAS 联通性 / 配额 / 数据量）
+# CF Cron Triggers 完全免费，24 次/天 = 仅 0.024% 配额
+# 异常时通过已订阅的 admin Web Push 通知（锁屏弹）
+[triggers]
+crons = ["0 * * * *"]
+
+# 本 Worker 完全无状态：纯 VAPID 签名 + Push 转发
+# 不用 KV / DO / R2，所有配置走 secret（不入 git）
+#
+# 部署前需要设置 4 个 secret（一次性）：
+#   wrangler secret put VAPID_JWK       # ECDSA P-256 私钥（JSON 字符串）
+#   wrangler secret put VAPID_PUBLIC    # uncompressed pub（base64url）
+#   wrangler secret put VAPID_SUBJECT   # mailto:你的邮箱
+#   wrangler secret put WORKER_SECRET   # GAS ↔ Worker 鉴权随机串
+#
+# 部署：wrangler deploy
+# 查日志：wrangler tail
+
+[observability]
+enabled = true
+
+[vars]
+# 公开变量（无密性，可以在这里）
+# 暂无
