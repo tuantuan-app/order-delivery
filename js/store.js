@@ -469,7 +469,7 @@
           }
         } catch (e) {}
         // 在线添加失败（断网/后端拒绝）：不写入覆盖列表，避免出现「池里没有、却出现在客户下拉」的脏数据
-        if (!added) { this.toastError('楼栋添加失败，请检查网络后重试'); return; }
+        if (!added) { this.toastError('网络有点慢，请刷新页面再试'); return; }
       } else {
         var h2 = state.hubs.find(function (x) { return x.id === m.hubId; });
         if (h2) { if (!h2.buildings) h2.buildings = []; if (h2.buildings.indexOf(name) < 0) h2.buildings.push(name); }
@@ -672,7 +672,7 @@
         catch (e) { self.failedSyncs.push(batch[i]); self.syncError = String((e && e.message) || e); }
       }
       self.syncBusy = false;
-      if (self.failedSyncs.length) self.toastError(self.failedSyncs.length + ' 项同步失败，可点底部重试');
+      if (self.failedSyncs.length) self.toastError('网络有点慢，请刷新页面再试');
       else self.syncError = '';
     },
     async retrySync() {
@@ -971,7 +971,7 @@
           // 下单成功 → 软引导客户开通通知（仅在 default 状态时弹一次，dismiss 后 7 天不再问）
           try { if (window.notify && o.customer && o.customer.phone) window.notify.promptCustomerAfterOrder(o.customer.phone); } catch (_) {}
         } else {
-          x.syncStatus = 'rejected'; x.syncError = (r && r.error) || '订单未通过校验'; self._clearOrderRetry(orderId); // 库存/截止/券等：重试无用
+          x.syncStatus = 'rejected'; x.syncError = (r && r.error) || '网络有点慢，请刷新页面再试'; self._clearOrderRetry(orderId); // 库存/截止/券等：重试无用
         }
       }).catch(function () {
         var x = self.getOrder(orderId); if (x && x.syncStatus !== 'synced' && x.syncStatus !== 'rejected') { x.syncStatus = 'pending'; self._scheduleOrderRetry(orderId); } // 断网/冷启动超时：后台续命重试

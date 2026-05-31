@@ -127,7 +127,7 @@
           <div class="order-card__meta"><span>{{ o.items.reduce((s,i)=>s+i.qty,0) }} 件 · {{ store.utils.rm(o.total) }}</span><span>🕒 {{ o.deliveryTime }}</span></div>
           <div class="order-card__remark" v-if="o.remark">📝 {{ o.remark }}</div>
           <div class="order-card__shot" v-if="shotState(o).key==='wait'">⏳ 支付截图上传中…</div>
-          <div class="order-card__shot order-card__shot--bad" v-else-if="shotState(o).key==='missing'">❌ 异常单：支付截图未上传</div>
+          <div class="order-card__shot order-card__shot--bad" v-else-if="shotState(o).key==='missing'">⚠ 客户截图未上传</div>
           <div class="card-actions" v-if="o.status==='pending'" @click.stop>
             <button class="btn btn--sm btn--danger" @click="askReject(o)">拒绝</button>
             <button class="btn btn--sm btn--primary" @click="store.approveOrder(o.id)">同意做菜</button>
@@ -159,7 +159,7 @@
             </div>
             <div class="modal__label">💳 支付截图（点击放大对账，可双指放大看单号）</div>
             <img class="shot" v-if="current.screenshot" :src="current.screenshot" alt="" @click="openShot(current.screenshot)" />
-            <div class="shot-missing" v-else>{{ shotState(current).key==='wait' ? '⏳ 客户支付截图上传中，请稍候…' : '❌ 截图同步超时，客户尚未补传。可联系客户或等其补传后再对账。' }}</div>
+            <div class="shot-missing" v-else>{{ shotState(current).key==='wait' ? '⏳ 客户支付截图上传中，请稍候…' : '⚠ 客户截图还没传上，可联系客户让其重新上传后再对账。' }}</div>
 
             <div class="modal__actions" v-if="current.status==='pending'">
               <button class="btn btn--danger" @click="askReject(current)">拒绝</button>
@@ -673,7 +673,7 @@
       function testRing() {
         var ok = window.merchantRinger && window.merchantRinger.testBeep(store.merchant && store.merchant.settings && store.merchant.settings.ring && store.merchant.settings.ring.volume);
         if (!ok) {
-          try { store.toastError && store.toastError('试听失败：浏览器拦截了声音，请先点击页面任意位置后再试'); } catch (_) {}
+          try { store.toastError && store.toastError('请先点击页面任意位置，再点试听'); } catch (_) {}
         }
       }
       function onQR(e) { pickImage(e, (d) => { const label = window.prompt('给这个收款码起个名字：', "Touch 'n Go") || '收款码'; store.addPayQR(store.merchant.id, label, d); }); }

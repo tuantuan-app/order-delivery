@@ -222,10 +222,10 @@
             <div class="order-card__top"><span class="order-card__id">{{ shopName(o.merchantId) }}</span><span class="chip" :class="st(o.status).cls">{{ st(o.status).label }}</span></div>
             <div class="order-card__cust">{{ items(o) }}</div>
             <div class="order-card__meta"><span>{{ store.utils.relTime(o.createdAt) }} · {{ o.id }}</span><span>{{ store.utils.rm(o.total) }}</span></div>
-            <div class="sync-note sync-note--go sm" v-if="o.syncStatus==='syncing'"><span class="spin spin--dark"></span> 同步中…</div>
-            <div class="sync-note sync-note--wait sm" v-else-if="o.syncStatus==='pending'">📶 离线重试中…</div>
-            <div class="sync-note sync-note--bad sm" v-else-if="o.syncStatus==='rejected'">❌ 下单未成功{{ o.syncError ? '：'+o.syncError : '' }}</div>
-            <div class="card-actions" v-if="o.imgStatus==='failed'" @click.stop><span class="img-sync__tag">❌ 截图超时</span><button class="btn btn--sm btn--primary" @click="store.retryOrderShot(o.id)">补传截图</button></div>
+            <div class="sync-note sync-note--go sm" v-if="o.syncStatus==='syncing'"><span class="spin spin--dark"></span> 正在发送给商家…</div>
+            <div class="sync-note sync-note--wait sm" v-else-if="o.syncStatus==='pending'">📶 网络有点慢，请刷新页面再试</div>
+            <div class="sync-note sync-note--bad sm" v-else-if="o.syncStatus==='rejected'">❌ 下单未成功，请刷新页面重试</div>
+            <div class="card-actions" v-if="o.imgStatus==='failed'" @click.stop><span class="img-sync__tag">⚠ 截图没传上</span><button class="btn btn--sm btn--primary" @click="store.retryOrderShot(o.id)">重新上传</button></div>
           </div>
         </template>
         <template v-if="past.length"><div class="cat-group__title">历史订单</div>
@@ -738,13 +738,13 @@
         <!-- 乐观下单：后端校验未通过（库存/截止/券）→ 整单未成，引导重下 -->
         <div class="card status-rejected" v-if="order.syncStatus==='rejected'">
           <div class="status-rejected__icon">❌</div><div class="status-rejected__title">下单未成功</div>
-          <div class="status-rejected__reason">{{ order.syncError || '订单未通过商家校验' }}</div>
+          <div class="status-rejected__reason">{{ order.syncError || '网络有点慢，请刷新页面再试' }}</div>
           <button class="btn btn--primary btn--pill" style="margin-top:14px" @click="$emit('neworder')">返回重新下单</button>
         </div>
         <template v-else>
         <!-- 乐观下单：后台同步状态（非阻塞，绝不弹中断式报错） -->
-        <div class="sync-note sync-note--go" v-if="order.syncStatus==='syncing'"><span class="spin spin--dark"></span> 正在同步到商家…</div>
-        <div class="sync-note sync-note--wait" v-else-if="order.syncStatus==='pending'">📶 网络不稳，正在后台自动重试同步…</div>
+        <div class="sync-note sync-note--go" v-if="order.syncStatus==='syncing'"><span class="spin spin--dark"></span> 正在发送给商家…</div>
+        <div class="sync-note sync-note--wait" v-else-if="order.syncStatus==='pending'">📶 网络有点慢，请刷新页面再试</div>
 
         <div class="card status-rejected" v-if="order.status === 'rejected'">
           <div class="status-rejected__icon">❌</div><div class="status-rejected__title">订单未通过</div>
@@ -782,10 +782,10 @@
         </div>
 
         <!-- 两阶段下单：支付截图后台同步状态 -->
-        <div class="card img-sync img-sync--wait" v-if="order.imgStatus==='uploading'"><span class="spin spin--dark"></span> 支付截图同步中…（订单已送达商家，无需等待）</div>
+        <div class="card img-sync img-sync--wait" v-if="order.imgStatus==='uploading'"><span class="spin spin--dark"></span> 支付截图上传中…（订单已发给商家，无需等待）</div>
         <div class="card img-sync img-sync--fail" v-else-if="order.imgStatus==='failed'">
-          <div class="img-sync__t">❌ 支付截图同步超时</div>
-          <p class="muted sm">网络可能不稳，商家暂时看不到你的付款凭证，请补传。</p>
+          <div class="img-sync__t">⚠ 支付截图没传上</div>
+          <p class="muted sm">网络有点慢，商家还没看到你的付款凭证，请补传。</p>
           <button class="btn btn--primary btn--pill img-sync__btn" @click="store.retryOrderShot(order.id)">一键补传截图</button>
         </div>
 

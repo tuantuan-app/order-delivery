@@ -205,7 +205,8 @@ function ensureSchema_() {
       return { vendorId: id, username: id, password: '', passwordHash: hpw,
         shopName: name, logo: logo, tngLabel: tng, HubID: hub, active: active !== false,
         settingsJson: JSON.stringify(conf), payQRsJson: JSON.stringify(qrs), categoriesJson: cats,
-        plan: plan || 'basic', planUntil: planUntil || '' };
+        plan: plan || 'basic', planUntil: planUntil || '',
+        isTest: 'TEST' }; // 所有 seed 商家自带 TEST 标 → admin「清除测试数据」可一键扫平
     }
 
     // shop1：PRO 专业版 — 配置包装费、扩展时段、会员积分
@@ -238,7 +239,7 @@ function ensureSchema_() {
     upsertRow_(TAB_HUBS, 'hubId', { hubId: 'ukm', name: 'UKM 团团', buildingsJson: JSON.stringify(['宿舍 1 座', '宿舍 2 座', '宿舍 3 座']) });
 
     function M(id, vid, hub, name, price, emoji, desc, cat, stock, opts, disc) {
-      return { itemId: id, vendorId: vid, HubID: hub, name: name, price: price, available: true, image: '', emoji: emoji, desc: desc, category: cat, stock: stock, optionsJson: opts ? JSON.stringify(opts) : '', discountJson: disc ? JSON.stringify(disc) : '' };
+      return { itemId: id, vendorId: vid, HubID: hub, name: name, price: price, available: true, image: '', emoji: emoji, desc: desc, category: cat, stock: stock, optionsJson: opts ? JSON.stringify(opts) : '', discountJson: disc ? JSON.stringify(disc) : '', isTest: 'TEST' };
     }
     var ricePortion = [{ id: 'g1', name: '份量', type: 'single', required: true, max: 1, options: [{ id: 'o1', name: '标准', price: 0 }, { id: 'o2', name: '大份 (+饭)', price: 2 }] }, { id: 'g2', name: '加料', type: 'multi', required: false, max: 3, options: [{ id: 'o3', name: '加煎蛋', price: 1.5 }, { id: 'o4', name: '加香肠', price: 2 }, { id: 'o5', name: '加菜', price: 1 }] }];
     [
@@ -264,6 +265,31 @@ function ensureSchema_() {
     props.setProperty('SEEDED5', '1');
   }
   props.setProperty('SCHEMA_READY7', '1'); _schemaReady = true;
+
+  // ==== 一次性 migration：给老 seed 数据补打 isTest='TEST' 标 ====
+  // 老版本部署时 seed 没标 TEST，导致 admin「清除测试数据」清不掉
+  // 此 migration 找到种子 shopId / itemId 列表，强制打 TEST 标
+  // 只跑一次，由 SEEDS_TAGGED1 标志位控制
+  if (props.getProperty('SEEDS_TAGGED1') !== '1') {
+    try {
+      var seedVendorIds = ['shop1', 'shop2', 'shop3', 'shop4'];
+      var seedItemIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'b1', 'b2', 'b4', 'c1', 'c2', 'c3', 'd1', 'd2', 'd3'];
+      var taggedV = 0, taggedM = 0;
+      seedVendorIds.forEach(function (vid) {
+        var v = cacheFind_(TAB_VENDORS, 'vendorId', vid);
+        if (v && v.isTest !== 'TEST') { cacheUpdateCell_(TAB_VENDORS, 'vendorId', vid, 'isTest', 'TEST'); taggedV++; }
+      });
+      seedItemIds.forEach(function (iid) {
+        var m = cacheFind_(TAB_MENU, 'itemId', iid);
+        if (m && m.isTest !== 'TEST') { cacheUpdateCell_(TAB_MENU, 'itemId', iid, 'isTest', 'TEST'); taggedM++; }
+      });
+      cacheFlush_();
+      logAction_('migration', 'SEEDS_TAGGED1', 'vendors=' + taggedV + ' menu=' + taggedM);
+    } catch (e) {
+      logAction_('migration', 'SEEDS_TAGGED1_FAIL', String(e).slice(0, 100));
+    }
+    props.setProperty('SEEDS_TAGGED1', '1');
+  }
 }
 
 function setupSheet() { ensureSchema_(); const u = ss_().getUrl(); Logger.log('DB: ' + u); return u; }

@@ -12,6 +12,22 @@
         <div class="dash__title"><h2 style="font-size:inherit;margin:0">🧪 测试工具</h2><span class="muted sm">内部专用</span></div>
         <p class="test-banner">所有造出来的数据都带 <b>TEST</b> 标记。{{ online ? '当前连接真实后端（Google Sheet），造的单会进表，可一键删除。' : '当前为本地模式，仅改浏览器数据。' }}</p>
 
+        <!-- 测试导览：告诉 admin 哪个 demo 商家测什么 -->
+        <div class="card" style="background:#f0fdf4;border:1px solid #bbf7d0">
+          <div class="card__label">🗺️ 测试导览 <span class="muted sm">不知道从哪开始？看这里</span></div>
+          <p class="sm" style="margin:8px 0;line-height:1.7">
+            <b>顶部「👁 视角」是核心</b>：在<b>同一套数据上</b>切换 🛠管理 / 🏪商家 / 🛒客户 三端，不用退出登录、不用开多窗口。
+          </p>
+          <div class="test-line"><span>🏪 测<b>专业版商家</b>（含会员/CRM/优惠券）</span><b>视角 → 商家 → 选 shop1（阿强快餐）</b></div>
+          <div class="test-line"><span>🏪 测<b>基础版商家</b>（无 PRO 功能）</span><b>视角 → 商家 → 选 shop2 / shop4</b></div>
+          <div class="test-line"><span>🏪 测<b>过期 PRO + 停业</b></span><b>视角 → 商家 → 选 shop3</b></div>
+          <div class="test-line"><span>🛒 测<b>客户视角</b>（浏览/下单/追踪）</span><b>视角 → 客户</b></div>
+          <div class="test-line"><span>📱 测<b>商家手机端响铃</b></span><b>视角 → 商家 → 设置 → 试听</b></div>
+          <p class="sm muted" style="margin-top:10px">
+            💡 完成 demo 测试后，<b>下方点「清除测试数据」</b>可一键扫平 4 demo 商家 + 14 demo 商品 + 所有 TEST 标记订单，留下空白等真实商家入驻。
+          </p>
+        </div>
+
         <!-- 健康检查 -->
         <div class="card">
           <div class="card__label">🩺 后端健康检查</div>
@@ -101,11 +117,11 @@
 
         <!-- 清除 -->
         <div class="card test-danger">
-          <div class="card__label">🧹 清除测试数据</div>
+          <div class="card__label">🧹 清除测试数据 <span class="muted sm">含 4 个 demo 商家 + 14 demo 商品 + 所有 TEST 标记订单</span></div>
           <div class="test-line"><span>当前本地测试单</span><b>{{ cnt.orders }}</b></div>
           <div class="test-line"><span>当前本地测试收款</span><b>{{ cnt.payments }}</b></div>
           <button class="btn btn--danger btn--block" @click="clear" :disabled="cb">{{ cb ? '清除中…' : '清除全部测试数据（本地' + (online ? ' + Google Sheet' : '') + '）' }}</button>
-          <p class="muted sm">只删带 TEST 标记的行，真实订单/商家/收款不受影响。</p>
+          <p class="muted sm">点一下扫平所有带 TEST 标的数据（demo 商家 + demo 商品 + 测试订单）。真实商家/订单/收款不受影响。<br>⚠ <b>首次部署后请先点这个</b>清掉 demo 数据，再开始添加真实商家。</p>
         </div>
       </div>
     `,

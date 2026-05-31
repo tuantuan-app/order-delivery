@@ -30,7 +30,7 @@
   window.SyncBar = {
     template: `
       <div class="sync-bar" v-if="store.syncError && store.failedSyncs.length">
-        <span>⚠ {{ store.failedSyncs.length }} 项未同步到云端</span>
+        <span>⚠ 网络有点慢，{{ store.failedSyncs.length }} 项未发送成功</span>
         <button @click="store.retrySync()" :disabled="store.syncBusy">{{ store.syncBusy ? '重试中…' : '点此重试' }}</button>
       </div>
     `,
@@ -204,7 +204,8 @@
             error.value = (r && r.error) || '账号或密码错误';
           } catch (e) {
             if (store.login(u, password.value) && store.auth.user.role === mode) return; // 后端连不上时回退本地演示
-            error.value = '无法连接后端：' + e;
+            // 用户面：不暴露异常技术细节，统一引导刷新
+            error.value = mode === 'admin' ? ('无法连接后端：' + e) : '网络有点慢，请刷新页面再试';
           } finally { busy.value = false; }
           return;
         }
