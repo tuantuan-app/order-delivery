@@ -36,6 +36,33 @@ export default {
     if (req.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
     const url = new URL(req.url);
 
+    // ---- Admin 入口（HTTP Basic Auth 保护）----
+    // 访问 https://tuantuan-push.keidev.workers.dev/admin 需要输入通行码
+    if (url.pathname === '/admin' || url.pathname === '/admin/') {
+      const AUTH_USER = env.ADMIN_AUTH_USER || 'admin';
+      const AUTH_PASS = env.ADMIN_AUTH_PASS || '';
+      if (!AUTH_PASS) {
+        // 未配置 → 直接重定向到公开 admin（向后兼容）
+        return Response.redirect('https://tuantuan-app.github.io/admin.html', 302);
+      }
+      const auth = req.headers.get('Authorization');
+      if (!auth || !checkBasicAuth(auth, AUTH_USER, AUTH_PASS)) {
+        return new Response('Admin access requires authentication', {
+          status: 401,
+          headers: { 'WWW-Authenticate': 'Basic realm="团团 TuanTuan Admin"' },
+        });
+      }
+      // 从 Pages 取 admin.html 并注入 <base> 使资源正常加载
+      try {
+        const pagesResp = await fetch('https://tuantuan-app.github.io/admin.html');
+        let html = await pagesResp.text();
+        html = html.replace('<head>', '<head><base href="https://tuantuan-app.github.io/">');
+        return new Response(html, { headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-cache' } });
+      } catch (e) {
+        return new Response('Failed to load admin page', { status: 502 });
+      }
+    }
+
     if (url.pathname === '/health') {
       return cors(json({ ok: true, ts: Date.now(), service: 'tuantuan-push', endpoints: ['/push', '/api', '/health'], cron: ['hourly health check'] }));
     }
@@ -98,6 +125,14 @@ export default {
 // ============================================================
 // CORS + JSON helpers
 // ============================================================
+function checkBasicAuth(header, user, pass) {
+  try {
+    const b64 = header.replace(/^Basic\s+/i, '');
+    const creds = atob(b64).split(':');
+    return creds[0] === user && creds[1] === pass;
+  } catch { return false; }
+}
+
 function cors(res) {
   res.headers.set('Access-Control-Allow-Origin', '*');
   res.headers.set('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');

@@ -76,6 +76,8 @@ window.api = {
   listHubs() { return this.post({ action: 'listHubs' }); },
   getMembership(vendorId, phone) { return this.post({ action: 'getMembership', vendorId, phone }); },
   addHubBuilding(hubId, name, token) { return this.post({ action: 'addHubBuilding', hubId, name, token }); },
+  removeHubBuilding(hubId, name, token) { return this.post({ action: 'removeHubBuilding', hubId, name, token }); },
+  saveHubBuildings(hubId, buildings, token) { return this.post({ action: 'saveHubBuildings', hubId, buildings, token }); },
   placeOrder(order) { return this.post({ action: 'placeOrder', order }, 25000); }, // 阶段1：仅文字，秒回 orderId
   attachScreenshot(orderId, image) { return this.post({ action: 'attachScreenshot', orderId, screenshot: image }, 20000); }, // 阶段2：后台补传截图
   cancelOrder(orderId) { return this.post({ action: 'cancelOrder', orderId }); },

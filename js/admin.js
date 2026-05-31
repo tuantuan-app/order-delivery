@@ -158,18 +158,31 @@
             <span class="chip st-delivering">?hub={{ h.id }}</span>
           </div>
           <div class="order-card__cust">{{ count(h.id) }} 个商家 · 客户专属链接：index.html?hub={{ h.id }}</div>
+          <!-- 楼栋管理 -->
+          <div style="margin:8px 0">
+            <div class="cov-group">
+              <label class="cov-chip" v-for="b in (h.buildings||[])" :key="b" :class="{on:true}">{{ b }}<button class="cov-chip__del" @click="rmBld(h,b)" title="删除">×</button></label>
+              <span class="muted sm" v-if="!(h.buildings||[]).length">暂无楼栋</span>
+            </div>
+            <div class="cat-add" style="margin-top:6px">
+              <input :id="'bld-'+h.id" :ref="el => bldInputs[h.id]=el" placeholder="添加楼栋，如：A 栋" @keyup.enter="addBld(h)" style="font-size:12px" />
+              <button class="btn btn--sm btn--primary" @click="addBld(h)">＋ 添加</button>
+              <button class="btn btn--sm btn--ghost" @click="bulkBld(h)" style="font-size:11px">📝 批量编辑</button>
+            </div>
+          </div>
           <div class="admin-shop__actions">
             <button class="btn btn--sm btn--ghost" @click="rename(h)">改抬头</button>
             <button class="btn btn--sm btn--ghost" @click="copyLink(h)">复制客户链接</button>
             <button class="btn btn--sm btn--danger" @click="del(h)">删除</button>
           </div>
         </div>
-        <p class="muted center sm">把对应链接发给该社区的客户即可，他们打开就只看到本社区的商家。</p>
+        <p class="muted center sm">Admin 添加基础楼栋 → 商家在设置里勾选覆盖范围，也可以加更多。</p>
       </div>
     `,
     setup() {
       const form = reactive({ id: '', name: '' });
       const error = ref('');
+      const bldInputs = {};
       function count(id) { return store.state.merchants.filter((m) => (m.hubId || '') === id).length; }
       function add() {
         if (!form.id.trim()) return (error.value = '请填写社区代码');
@@ -183,7 +196,21 @@
         else store.showToast('请复制此链接：' + link, 'info');
       }
       function del(h) { if (window.confirm('删除社区「' + h.name + '」？该社区下的商家不会被删除，但需重新分配社区。')) store.removeHub(h.id); }
-      return { store, form, error, count, add, rename, copyLink, del };
+      function addBld(h) {
+        var el = bldInputs[h.id]; var name = el ? el.value.trim() : '';
+        if (!name) return;
+        store.adminAddBuilding(h.id, name);
+        if (el) el.value = '';
+      }
+      function rmBld(h, name) { if (window.confirm('从 ' + h.name + ' 删除楼栋「' + name + '」？\n\n该楼栋将从商家可选的覆盖范围中移除。')) store.adminRemoveBuilding(h.id, name); }
+      function bulkBld(h) {
+        var cur = (h.buildings || []).join('\n');
+        var input = window.prompt('批量编辑「' + h.name + '」楼栋\n每行一个楼栋名，会替换当前全部：', cur);
+        if (input === null) return;
+        var list = input.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+        store.adminSaveBuildings(h.id, list);
+      }
+      return { store, form, error, bldInputs, count, add, rename, copyLink, del, addBld, rmBld, bulkBld };
     },
   };
 

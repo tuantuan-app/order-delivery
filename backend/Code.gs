@@ -466,6 +466,8 @@ function doPost(e) {
       case 'saveHub':           result = adminGuard_(body, function () { return withLock_(function () { return saveHub_(body); }); }); break;
       case 'addHubBuilding':    result = withLock_(function () { return addHubBuilding_(body); }); break;
       case 'removeHub':         result = adminGuard_(body, function () { return withLock_(function () { return removeHub_(body); }); }); break;
+      case 'removeHubBuilding': result = adminGuard_(body, function () { return withLock_(function () { return removeHubBuilding_(body); }); }); break;
+      case 'saveHubBuildings':  result = adminGuard_(body, function () { return withLock_(function () { return saveHubBuildings_(body); }); }); break;
       // 计费 / 套餐（仅管理员）
       case 'saveVendorPlan':    result = adminGuard_(body, function () { return withLock_(function () { return saveVendorPlan_(body); }); }); break;
       case 'addPayment':        result = adminGuard_(body, function () { return withLock_(function () { return addPayment_(body); }); }); break;
@@ -1122,6 +1124,33 @@ function addHubBuilding_(body) {
   if (list.indexOf(name) < 0) list.push(name);
   if (h) cacheUpdateCell_(TAB_HUBS, 'hubId', hubId, 'buildingsJson', JSON.stringify(list));
   else cacheUpsert_(TAB_HUBS, 'hubId', { hubId: hubId, name: hubId, buildingsJson: JSON.stringify(list) });
+  return { ok: true, buildings: list, hubId: hubId };
+}
+
+/** Admin 从社区楼栋池中删除某个楼栋 */
+function removeHubBuilding_(body) {
+  var hubId = sanitize_(String(body.hubId || ''), 30).toLowerCase();
+  var name = sanitize_(String(body.name || ''), 40).trim();
+  if (!hubId || !name) return { ok: false, error: '缺少 hubId 或 name' };
+  var h = cacheFind_(TAB_HUBS, 'hubId', hubId);
+  if (!h) return { ok: false, error: '社区不存在' };
+  var list = (h && safeParse_(h.buildingsJson)) || [];
+  var idx = list.indexOf(name);
+  if (idx >= 0) list.splice(idx, 1);
+  cacheUpdateCell_(TAB_HUBS, 'hubId', hubId, 'buildingsJson', JSON.stringify(list));
+  logAction_('admin', 'HUB_BUILDING_REMOVE', 'hubId=' + hubId + ' name=' + name);
+  return { ok: true, buildings: list, hubId: hubId };
+}
+
+/** Admin 批量设置社区楼栋池（替换整列） */
+function saveHubBuildings_(body) {
+  var hubId = sanitize_(String(body.hubId || ''), 30).toLowerCase();
+  var list = Array.isArray(body.buildings) ? body.buildings.map(function(b) { return sanitize_(String(b), 40).trim(); }).filter(Boolean) : [];
+  if (!hubId) return { ok: false, error: '缺少 hubId' };
+  var h = cacheFind_(TAB_HUBS, 'hubId', hubId);
+  if (h) cacheUpdateCell_(TAB_HUBS, 'hubId', hubId, 'buildingsJson', JSON.stringify(list));
+  else cacheUpsert_(TAB_HUBS, 'hubId', { hubId: hubId, name: hubId, buildingsJson: JSON.stringify(list) });
+  logAction_('admin', 'HUB_BUILDINGS_SAVE', 'hubId=' + hubId + ' count=' + list.length);
   return { ok: true, buildings: list, hubId: hubId };
 }
 

@@ -480,6 +480,30 @@
       if (!m.settings.coverage) m.settings.coverage = []; if (m.settings.coverage.indexOf(name) < 0) m.settings.coverage.push(name); this._syncMerchantConfig(mid);
     },
 
+    // ===== Admin 楼栋管理 =====
+    async adminAddBuilding(hubId, name) {
+      name = (name || '').trim(); if (!name) return;
+      var r = await window.api.addHubBuilding(hubId, name, auth.token);
+      if (r && r.ok && Array.isArray(r.buildings)) {
+        var h = state.hubs.find(function (x) { return x.id === hubId; });
+        if (h) h.buildings = r.buildings; else state.hubs.push({ id: hubId, name: hubId, buildings: r.buildings });
+      }
+    },
+    async adminRemoveBuilding(hubId, name) {
+      var r = await window.api.removeHubBuilding(hubId, name, auth.token);
+      if (r && r.ok && Array.isArray(r.buildings)) {
+        var h = state.hubs.find(function (x) { return x.id === hubId; });
+        if (h) h.buildings = r.buildings;
+      }
+    },
+    async adminSaveBuildings(hubId, buildings) {
+      var r = await window.api.saveHubBuildings(hubId, buildings, auth.token);
+      if (r && r.ok && Array.isArray(r.buildings)) {
+        var h = state.hubs.find(function (x) { return x.id === hubId; });
+        if (h) h.buildings = r.buildings; else state.hubs.push({ id: hubId, name: hubId, buildings: r.buildings });
+      }
+    },
+
     // ===== 查询 =====
     getMerchant(id) { return state.merchants.find((m) => m.id === id) || null; },
     getOrder(id) { return state.orders.find((o) => o.id === id) || null; },
