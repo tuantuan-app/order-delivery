@@ -32,7 +32,7 @@ webcrypto.getRandomValues(workerSecret);
 
 const b64u = (buf) => Buffer.from(buf).toString('base64url');
 
-const subject = 'mailto:nihaotuantuan@gmail.com';
+const subject = 'mailto:katherinetan2003x@gmail.com';
 
 const banner = (s) => `\n\x1b[36m=== ${s} ===\x1b[0m`;
 const note = (s) => `\x1b[33m${s}\x1b[0m`;

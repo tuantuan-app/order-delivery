@@ -52,7 +52,7 @@ wrangler secret put VAPID_PUBLIC
 wrangler secret put WORKER_SECRET
 # 粘贴：e7SzQDD...                                    ← 上一步 #3
 wrangler secret put VAPID_SUBJECT
-# 粘贴：mailto:nihaotuantuan@gmail.com           ← 上一步 #4
+# 粘贴：mailto:katherinetan2003x@gmail.com           ← 上一步 #4
 wrangler secret put GAS_API_BASE
 # 粘贴：https://script.google.com/macros/s/AKfycb.../exec  ← /api 反向代理目标
 ```
