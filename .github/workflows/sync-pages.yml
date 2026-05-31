@@ -1,0 +1,31 @@
+name: Sync Frontend to Pages
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy frontend files
+        run: |
+          mkdir -p dist
+          cp index.html merchant.html admin.html privacy.html terms.html dist/
+          cp styles.css styles-crm.css dist/
+          cp manifest.webmanifest sw.js dist/
+          mkdir -p dist/js dist/vendor
+          cp js/config.js js/api.js js/store.js js/student.js js/main.js js/merchant.js js/merchant-crm.js js/merchant-ringer.js js/notify.js js/console.js js/contact.js js/admin.js dist/js/
+          cp vendor/vue.global.prod.js dist/vendor/
+
+      - name: Deploy to Pages repo
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          deploy_key: ${{ secrets.PAGES_DEPLOY_KEY }}
+          external_repository: tuantuan-app/tuantuan-app.github.io
+          publish_branch: main
+          publish_dir: ./dist
+          force_orphan: false
+          commit_message: 'deploy: sync from private repo [skip ci]'
