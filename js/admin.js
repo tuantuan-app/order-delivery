@@ -338,7 +338,7 @@
           <div class="bill-row" v-for="m in rows" :key="m.id">
             <div class="bill-row__main">
               <div class="bill-row__name">{{ m.name }} <span class="plan-badge" :class="'plan-badge--'+store.planStatus(m).key">{{ store.planStatus(m).label }}</span></div>
-              <div class="bill-row__sub">{{ m.plan === 'pro' ? (m.planUntil ? '到期 ' + m.planUntil : '永久专业版') : '基础版 RM 9/月' }}</div>
+              <div class="bill-row__sub">{{ m.plan === 'pro' ? (m.planUntil ? '到期 ' + m.planUntil : '永久专业版') : '基础版 RM 29/月' }}</div>
             </div>
             <button class="btn btn--sm btn--ghost" @click="open(m)">套餐 / 续费</button>
           </div>
@@ -359,8 +359,8 @@
             <div class="field-row">
               <label class="field"><span>套餐</span>
                 <select class="reject-select" v-model="form.plan">
-                  <option value="basic">基础版 RM 9/月</option>
-                  <option value="pro">专业版 RM 29/月</option>
+                  <option value="basic">基础版 RM 29/月</option>
+                  <option value="pro">专业版 RM 39/月</option>
                 </select>
               </label>
               <label class="field"><span>到期日</span><input type="date" v-model="form.planUntil" :disabled="form.plan!=='pro'" /></label>

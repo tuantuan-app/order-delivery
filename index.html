@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!-- Content Security Policy：限制资源加载来源，防 XSS 注入扩散 / 防 clickjacking / 防 plugin 滥用
+       'unsafe-inline'/'unsafe-eval' 是 Vue 3 运行时编译器所需；未来用编译模板可去掉 unsafe-eval -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://script.google.com https://*.workers.dev https://*.googleusercontent.com; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'" />
   <title>团团 · 点单</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="styles-crm.css" />

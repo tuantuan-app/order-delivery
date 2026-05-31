@@ -563,14 +563,48 @@ function withLock_(fn) {
 // ==================== 业务逻辑 ====================
 
 // -- 登录 --
+// 登录暴力破解防护：5 次失败 / 15 分钟 → 锁该账号 15 分钟
+// 存 PropertiesService 计数 → 0 成本、跨请求持久
+// 用 SHA-256(username) 截断做 key，避免账号枚举（攻击者看 key 列表无法推回 username）
+function checkLoginRateLimit_(username) {
+  var sp = PropertiesService.getScriptProperties();
+  var key = 'lo_' + sha256_(username).slice(0, 16);
+  var raw = sp.getProperty(key);
+  var rec = raw ? safeParseObj_(raw) || { fails: 0, blockUntil: 0 } : { fails: 0, blockUntil: 0 };
+  var now = Date.now();
+  if (rec.blockUntil > now) {
+    var remaining = Math.ceil((rec.blockUntil - now) / 60000);
+    return { ok: false, error: '账号已锁定，请 ' + remaining + ' 分钟后再试', key: key, rec: rec };
+  }
+  return { ok: true, key: key, rec: rec };
+}
+function recordLoginFail_(check) {
+  if (!check || !check.key || !check.rec) return;
+  var sp = PropertiesService.getScriptProperties();
+  check.rec.fails = (check.rec.fails || 0) + 1;
+  if (check.rec.fails >= 5) {
+    check.rec.blockUntil = Date.now() + 15 * 60 * 1000; // 15 分钟锁定
+    check.rec.fails = 0; // 重置计数（下次又是 5 次新的窗口）
+  }
+  sp.setProperty(check.key, JSON.stringify(check.rec));
+}
+function recordLoginSuccess_(check) {
+  if (!check || !check.key) return;
+  try { PropertiesService.getScriptProperties().deleteProperty(check.key); } catch (_) {}
+}
+
 function vendorLogin_(body) {
   var username = sanitize_(body.username, 30).trim();
   var password = String(body.password || '');
   if (!username || !password) return { ok: false, error: '请输入账号和密码' };
 
+  // 防暴力破解：先看 username 是否被锁
+  var rate = checkLoginRateLimit_(username);
+  if (!rate.ok) { logAction_(username, 'LOGIN_BLOCKED', '次数超限'); return { ok: false, error: rate.error }; }
+
   // 按 username 单行查找，避免把整张 Vendors 表读进请求缓存（登录提速关键）
   var found = readVendorByUsername_(username);
-  if (!found) { logAction_(username, 'LOGIN_FAIL', '账号不存在'); return { ok: false, error: '账号不存在' }; }
+  if (!found) { recordLoginFail_(rate); logAction_(username, 'LOGIN_FAIL', '账号不存在'); return { ok: false, error: '账号不存在' }; }
   var v = found.row;
   if (v.active === false || String(v.active).toUpperCase() === 'FALSE') { logAction_(username, 'LOGIN_FAIL', '账号已停用'); return { ok: false, error: '账号已停用' }; }
 
@@ -582,7 +616,7 @@ function vendorLogin_(body) {
     ok = (String(v.password) === password);
   }
 
-  if (!ok) { logAction_(username, 'LOGIN_FAIL', '密码错误'); return { ok: false, error: '密码错误' }; }
+  if (!ok) { recordLoginFail_(rate); logAction_(username, 'LOGIN_FAIL', '密码错误'); return { ok: false, error: '密码错误' }; }
 
   // 自动升级明文密码到 SHA-256（直接按行号写单元格，不触发全表缓存读）
   if (!v.passwordHash) {
@@ -590,6 +624,7 @@ function vendorLogin_(body) {
     writeVendorCell_(found.rowIndex, found.headers, 'password', '');
   }
 
+  recordLoginSuccess_(rate);
   logAction_(username, 'LOGIN_SUCCESS', 'vendorId=' + v.vendorId);
   return { ok: true, token: makeToken_(String(v.vendorId)), vendor: vendorPublic_(v), pollIntervalMs: 15000 };
 }
@@ -598,11 +633,19 @@ function adminLogin_(body) {
   var props = PropertiesService.getScriptProperties();
   var u = props.getProperty('ADMIN_USER') || 'admin';
   var p = props.getProperty('ADMIN_PASS') || 'admin123';
-  if (sanitize_(body.username, 30).trim() === u && String(body.password || '') === p) {
+  var username = sanitize_(body.username, 30).trim();
+
+  // 防暴力破解：admin 也保护
+  var rate = checkLoginRateLimit_('admin:' + username);
+  if (!rate.ok) { logAction_(username, 'ADMIN_LOGIN_BLOCKED', '次数超限'); return { ok: false, error: rate.error }; }
+
+  if (username === u && String(body.password || '') === p) {
+    recordLoginSuccess_(rate);
     logAction_(u, 'ADMIN_LOGIN_SUCCESS', '');
     return { ok: true, token: makeToken_('admin') };
   }
-  logAction_(sanitize_(String(body.username || ''), 30), 'ADMIN_LOGIN_FAIL', '');
+  recordLoginFail_(rate);
+  logAction_(username, 'ADMIN_LOGIN_FAIL', '');
   return { ok: false, error: '管理员账号或密码错误' };
 }
 

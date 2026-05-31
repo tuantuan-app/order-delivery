@@ -1107,13 +1107,13 @@
 
     // ===== 计费 / 套餐管理（admin 端）=====
     PRO_PRICE: 29,  // 专业版月费（RM）
-    BASIC_PRICE: 9, // 基础版月费（RM）
+    BASIC_PRICE: 29, // 基础版月费（RM）
     _daysUntil(ymd) { try { return Math.ceil((new Date(ymd + 'T23:59').getTime() - Date.now()) / 86400000); } catch (e) { return 9999; } },
     planStatus(m) {
-      if (!m) return { key: 'basic', label: '基础版 RM9' };
+      if (!m) return { key: 'basic', label: '基础版 RM29' };
       if (this.planExpired(m)) return { key: 'expired', label: '已过期' };
-      if (m.plan === 'pro') { var d = m.planUntil ? this._daysUntil(m.planUntil) : 9999; return d <= 14 ? { key: 'soon', label: '剩 ' + d + ' 天' } : { key: 'pro', label: '专业版 RM29' }; }
-      return { key: 'basic', label: '基础版 RM9' };
+      if (m.plan === 'pro') { var d = m.planUntil ? this._daysUntil(m.planUntil) : 9999; return d <= 14 ? { key: 'soon', label: '剩 ' + d + ' 天' } : { key: 'pro', label: '专业版 RM39' }; }
+      return { key: 'basic', label: '基础版 RM29' };
     },
     // 计费用的商家规范列表：admin 在线时用 listVendors 返回的全量行，否则用本地 merchants
     billingRows() {

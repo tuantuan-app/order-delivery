@@ -79,8 +79,8 @@
           <div class="upsell__feat">📣 平台广告位 · 在客户端首页推广你的店（即将推出）</div>
         </div>
         <div class="upsell__plan">
-          <div><div class="upsell__plan-name">基础版</div><div class="upsell__plan-price">RM 9 <span>/ 月</span></div></div>
-          <div class="upsell__plan-name">专业版</div><div class="upsell__plan-price" style="color:var(--green-d)">RM 29 <span>/ 月</span></div>
+          <div><div class="upsell__plan-name">基础版</div><div class="upsell__plan-price">RM 29 <span>/ 月</span></div></div>
+          <div class="upsell__plan-name">专业版</div><div class="upsell__plan-price" style="color:var(--green-d)">RM 39 <span>/ 月</span></div>
           <div class="upsell__plan-now">当前：{{ store.merchant && store.merchant.plan === 'pro' ? '专业版(已过期)' : '基础版' }}</div>
         </div>
         <button class="btn btn--primary btn--block btn--pill" @click="contact">联系平台升级</button>
