@@ -70,22 +70,32 @@
     } catch (_) { return null; }
   }
 
+  // 温暖钟声：E5 基音 + 2 个泛音叠加（让声音"有体积"而不是单频电子音）
+  // 指数衰减包络模拟真实金属铃铛的余音 —— 简单但不电子、不刺耳
   function beep(volume, dur) {
     if (!ctx) return;
     var t0 = ctx.currentTime;
-    var osc = ctx.createOscillator();
-    var gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, t0);
-    osc.frequency.exponentialRampToValueAtTime(660, t0 + dur);
-    // ADSR 信封：避免咔哒声
-    gain.gain.setValueAtTime(0, t0);
-    gain.gain.linearRampToValueAtTime(volume, t0 + 0.015);
-    gain.gain.linearRampToValueAtTime(volume, t0 + dur - 0.04);
-    gain.gain.linearRampToValueAtTime(0, t0 + dur);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.02);
+    var duration = 0.55; // 单次铃声 550ms，1.2s 间隔下留够安静空隙
+    // 三层泛音（基音 + 八度 + 八度五度），振幅递减模拟自然铃铛
+    var partials = [
+      { freq: 659.25, amp: 0.65 }, // E5 基音（主体音色）
+      { freq: 1318.5, amp: 0.25 }, // E6 八度泛音（明亮感）
+      { freq: 988.31, amp: 0.15 }, // B5 五度泛音（和谐感）
+    ];
+    partials.forEach(function (p) {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = p.freq;
+      var peakVol = Math.max(0.0001, volume * p.amp);
+      // 快速 attack (6ms) + 指数衰减 → 像真实铃铛敲下去的余音
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(peakVol, t0 + 0.006);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + duration + 0.02);
+    });
   }
 
   function startLoop() {

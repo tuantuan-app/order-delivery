@@ -328,7 +328,7 @@
       function st(s) { return STATUS_TEXT[s] || { label: s, cls: '' }; }
       // 两阶段下单：截图为空 + 超龄(>60s) → 异常单（派生，不依赖后端新状态）
       function shotState(o) { if (o.screenshot) return { key: 'ok' }; if (o.status === 'rejected' || o.status === 'cancelled') return { key: 'na' }; return (Date.now() - (Number(o.createdAt) || 0) < 60000) ? { key: 'wait' } : { key: 'missing' }; }
-      // 通知客户（WhatsApp wa.me 免费跳转 / 复制文案）。马来号 0xxx → 60xxx
+      // 通知客户（WhatsApp wa.me 免费跳转 / 复制文案）。大马号 0xxx → 60xxx
       function waPhone(p) { var d = String(p || '').replace(/\D/g, ''); if (!d) return ''; if (d.charAt(0) === '0') d = '60' + d.slice(1); else if (d.slice(0, 2) !== '60' && d.length <= 10) d = '60' + d; return d; }
       function notifyMsg(o) {
         var m = store.getMerchant(o.merchantId); var shop = m ? m.name : '商家';
@@ -606,7 +606,7 @@
           <div class="card__label">💬 客户 WhatsApp 联系号 <span class="muted sm">客户在订单页可一键 wa.me 找你</span></div>
           <div class="ring-row">
             <span>WhatsApp 号</span>
-            <input type="tel" v-model="store.merchant.settings.waNumber" placeholder="例：0123456789（马来号自动加 60）" style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--line,#e5e7eb);border-radius:6px" />
+            <input type="tel" v-model="store.merchant.settings.waNumber" placeholder="例：0123456789（大马号自动加 60）" style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--line,#e5e7eb);border-radius:6px" />
           </div>
           <p class="muted sm">留空则客户端不展示「联系商家」按钮。这只是一个 wa.me 跳转链接，不会自动发送消息。</p>
         </div>

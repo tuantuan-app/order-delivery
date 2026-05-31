@@ -3,7 +3,7 @@
 **Last updated / 最后更新：2026-05-31**
 **Version / 版本：v1.0**
 
-> 本政策受马来西亚《2010 年个人资料保护法》（**PDPA**）管辖。
+> 本政策受大马《2010 年个人资料保护法》（**PDPA**）管辖。
 > Governed by Malaysia Personal Data Protection Act 2010.
 
 ---
@@ -121,7 +121,7 @@ For any privacy concerns: nihaotuantuan@gmail.com
 - **Cloudflare Workers**（Cloudflare Inc. 运营，全球服务器）—— 推送通知中转 + 读缓存，**不**做永久存储
 - **你的浏览器 localStorage**—— 本地缓存的资料和订单列表，方便离线访问
 
-数据可能传输至马来西亚境外的 Google 和 Cloudflare 数据中心。**使用本平台即表示你同意此类跨境传输**。
+数据可能传输至大马境外的 Google 和 Cloudflare 数据中心。**使用本平台即表示你同意此类跨境传输**。
 
 ### 4. 谁能看到你的数据
 
@@ -176,4 +176,4 @@ For any privacy concerns: nihaotuantuan@gmail.com
 ---
 
 *This policy is provided in good faith for a small-scale beta operation. For commercial use at scale, please consult a Malaysian-licensed lawyer for review.*
-*本政策为小规模 beta 阶段善意提供。商业化规模请咨询马来西亚执业律师审阅。*
+*本政策为小规模 beta 阶段善意提供。商业化规模请咨询大马执业律师审阅。*
