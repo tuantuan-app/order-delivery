@@ -9,7 +9,7 @@
  * ⚠ 建好测试后端后，把它的 Apps Script /exec 网址填进下面的 TEST_API。
  */
 (function () {
-  var PROD_API = 'https://script.google.com/macros/s/AKfycbyl8rGCoIcpkwjwEjyTVsrBiGnwAy2SxYi5W2t6nhQ4X_S1RmNUw0-oQqbsXcrIyDkMWg/exec';
+  var PROD_API = 'https://script.google.com/macros/s/AKfycbxOqbUg6NtL0619X-PyJxsHcLAQfSatwYIBaMsgkVZomNmxExaUsKZVAA7mvEoLXZGpqQ/exec';
   var TEST_API = ''; // ← 填入「测试库」Apps Script 部署的 /exec 网址（建好测试后端后）
 
   var qs = location.search || '';

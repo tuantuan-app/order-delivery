@@ -648,7 +648,6 @@ function adminLogin_(body) {
   logAction_(username, 'ADMIN_LOGIN_FAIL', '');
   return { ok: false, error: '管理员账号或密码错误' };
 }
-
 function safeParseObj_(s) { try { var o = JSON.parse(s); return (o && typeof o === 'object') ? o : null; } catch (e) { return null; } }
 
 // 套餐判定（服务端权威）：pro 且未过期才享专业版（会员积分 + 统计CRM）；planUntil 空=永久
