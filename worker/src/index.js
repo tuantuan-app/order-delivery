@@ -36,6 +36,38 @@ export default {
     if (req.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
     const url = new URL(req.url);
 
+    // ---- Admin 工具：一次性清空 Sheet 数据（Basic Auth 保护 + workerSecret 转给 GAS） ----
+    // 访问 https://tuantuan-push.keidev.workers.dev/admin/wipe → 浏览器弹密码框
+    // 输入 admin 凭据 → Worker 调 GAS wipeAllData → 清表 → 返回 JSON
+    if (url.pathname === '/admin/wipe') {
+      const AUTH_USER = env.ADMIN_AUTH_USER || 'admin';
+      const AUTH_PASS = env.ADMIN_AUTH_PASS || '';
+      if (!AUTH_PASS) return new Response('AUTH not configured', { status: 500 });
+      const auth = req.headers.get('Authorization');
+      if (!auth || !checkBasicAuth(auth, AUTH_USER, AUTH_PASS)) {
+        return new Response('Auth required', {
+          status: 401,
+          headers: { 'WWW-Authenticate': 'Basic realm="团团 Wipe"' },
+        });
+      }
+      if (!env.GAS_API_BASE || !env.WORKER_SECRET) {
+        return new Response('GAS_API_BASE/WORKER_SECRET not set', { status: 500 });
+      }
+      try {
+        const r = await fetch(env.GAS_API_BASE, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'wipeAllData', workerSecret: env.WORKER_SECRET }),
+        });
+        const text = await r.text();
+        return new Response('<pre>' + text + '</pre><p><a href="/admin">回到 admin</a></p>', {
+          headers: { 'Content-Type': 'text/html;charset=utf-8' },
+        });
+      } catch (e) {
+        return new Response('Wipe failed: ' + String(e), { status: 502 });
+      }
+    }
+
     // ---- Admin 入口（HTTP Basic Auth 保护）----
     // 访问 https://tuantuan-push.keidev.workers.dev/admin 需要输入通行码
     if (url.pathname === '/admin' || url.pathname === '/admin/') {

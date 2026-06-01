@@ -294,6 +294,36 @@ function ensureSchema_() {
 
 function setupSheet() { ensureSchema_(); const u = ss_().getUrl(); Logger.log('DB: ' + u); return u; }
 
+// ==== 一次性工具：清空 Vendors/Orders/Menu/Payments/Subscriptions，保留 Hubs 和 schema ====
+// 用 clasp 调：clasp run wipeAllData
+// 或在 Apps Script 编辑器选这个函数 → Run
+// 保留 SEEDED5='1' 防止下次请求自动再 seed
+function wipeAllData() {
+  ensureSchema_();
+  cacheReset_();
+  var tabs = [TAB_VENDORS, TAB_ORDERS, TAB_MENU, TAB_PAYMENTS, TAB_SUBSCRIPTIONS];
+  var counts = {};
+  tabs.forEach(function (name) {
+    var sh = sheet_(name);
+    var n = sh.getLastRow();
+    if (n > 1) sh.deleteRows(2, n - 1); // 保留表头（第 1 行）
+    counts[name] = n - 1;
+  });
+  PropertiesService.getScriptProperties().setProperty('SEEDED5', '1'); // 锁住别再 seed
+  Logger.log('Wiped: ' + JSON.stringify(counts));
+  return counts;
+}
+
+// HTTP 形式：workerSecret 守卫，可通过 /exec POST 触发
+function wipeAllDataAction_(body) {
+  var sp = PropertiesService.getScriptProperties();
+  if (body.workerSecret !== sp.getProperty('WORKER_SECRET')) {
+    return { ok: false, error: 'unauthorized' };
+  }
+  var counts = wipeAllData();
+  return { ok: true, wiped: counts };
+}
+
 // ==================== 原始读写工具（仅 schema 初始化用，不参与请求缓存） ====================
 function readRows_(name) {
   const values = sheet_(name).getDataRange().getValues();
@@ -512,6 +542,8 @@ function doPost(e) {
       case 'testPush':          result = adminGuard_(body, function () { return testPush_(body); }); break;
       // 健康检查（由 CF Worker Cron 每小时调用；workerSecret 自鉴权，绕过 adminGuard）
       case 'systemSelfCheck':   result = systemSelfCheck_(body); break;
+      // 一次性清表（workerSecret 自鉴权；保留 Hubs / schema / 表头）
+      case 'wipeAllData':       result = wipeAllDataAction_(body); break;
       default:                  result = { ok: false, error: '未知操作: ' + sanitize_(String(body.action), 50) };
     }
     // 将所有缓存中的脏数据批量写回 Sheet（一次请求只 flush 一次）
