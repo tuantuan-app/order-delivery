@@ -542,26 +542,73 @@
     },
 
     // ===== Admin 楼栋管理 =====
+    // 之前的版本：失败/超时静默吞掉，UI 还像加成功了；并发请求乱序到达时整列覆盖把已加的覆盖没了；
+    //            demo 模式没后端时也走在线分支 → 永远失败、还无 toast。
+    // 现在：① 返回 boolean 给调用方做串行控制（后端 LockService + 前端 await，双保险）
+    //      ② 离线/demo 直接写本地，与 merchant 端 addBuildingToHub 一致
+    //      ③ 失败大声 toast，不再静默吞
     async adminAddBuilding(hubId, name) {
-      name = (name || '').trim(); if (!name) return;
-      var r = await window.api.addHubBuilding(hubId, name, auth.token);
-      if (r && r.ok && Array.isArray(r.buildings)) {
-        var h = state.hubs.find(function (x) { return x.id === hubId; });
-        if (h) h.buildings = r.buildings; else state.hubs.push({ id: hubId, name: hubId, buildings: r.buildings });
+      name = (name || '').trim(); if (!name) return false;
+      if (!(window.api && window.api.enabled())) {
+        // 离线/demo：本地直接 push，去重
+        var hL = state.hubs.find(function (x) { return x.id === hubId; });
+        if (hL) { if (!hL.buildings) hL.buildings = []; if (hL.buildings.indexOf(name) < 0) hL.buildings.push(name); }
+        else state.hubs.push({ id: hubId, name: hubId, buildings: [name] });
+        return true;
+      }
+      try {
+        var r = await window.api.addHubBuilding(hubId, name, auth.token);
+        if (r && r.ok && Array.isArray(r.buildings)) {
+          var h = state.hubs.find(function (x) { return x.id === hubId; });
+          if (h) h.buildings = r.buildings; else state.hubs.push({ id: hubId, name: hubId, buildings: r.buildings });
+          return true;
+        }
+        this.toastError('添加楼栋失败：' + ((r && r.error) || '后端没回应（检查登录态/网络）'));
+        return false;
+      } catch (e) {
+        this.toastError('添加楼栋失败：' + (e.message || e));
+        return false;
       }
     },
     async adminRemoveBuilding(hubId, name) {
-      var r = await window.api.removeHubBuilding(hubId, name, auth.token);
-      if (r && r.ok && Array.isArray(r.buildings)) {
-        var h = state.hubs.find(function (x) { return x.id === hubId; });
-        if (h) h.buildings = r.buildings;
+      if (!(window.api && window.api.enabled())) {
+        var hL = state.hubs.find(function (x) { return x.id === hubId; });
+        if (hL && hL.buildings) { var i = hL.buildings.indexOf(name); if (i >= 0) hL.buildings.splice(i, 1); }
+        return true;
+      }
+      try {
+        var r = await window.api.removeHubBuilding(hubId, name, auth.token);
+        if (r && r.ok && Array.isArray(r.buildings)) {
+          var h = state.hubs.find(function (x) { return x.id === hubId; });
+          if (h) h.buildings = r.buildings;
+          return true;
+        }
+        this.toastError('删除楼栋失败：' + ((r && r.error) || '后端没回应'));
+        return false;
+      } catch (e) {
+        this.toastError('删除楼栋失败：' + (e.message || e));
+        return false;
       }
     },
     async adminSaveBuildings(hubId, buildings) {
-      var r = await window.api.saveHubBuildings(hubId, buildings, auth.token);
-      if (r && r.ok && Array.isArray(r.buildings)) {
-        var h = state.hubs.find(function (x) { return x.id === hubId; });
-        if (h) h.buildings = r.buildings; else state.hubs.push({ id: hubId, name: hubId, buildings: r.buildings });
+      if (!(window.api && window.api.enabled())) {
+        var hL = state.hubs.find(function (x) { return x.id === hubId; });
+        if (hL) hL.buildings = (buildings || []).slice();
+        else state.hubs.push({ id: hubId, name: hubId, buildings: (buildings || []).slice() });
+        return true;
+      }
+      try {
+        var r = await window.api.saveHubBuildings(hubId, buildings, auth.token);
+        if (r && r.ok && Array.isArray(r.buildings)) {
+          var h = state.hubs.find(function (x) { return x.id === hubId; });
+          if (h) h.buildings = r.buildings; else state.hubs.push({ id: hubId, name: hubId, buildings: r.buildings });
+          return true;
+        }
+        this.toastError('保存楼栋失败：' + ((r && r.error) || '后端没回应'));
+        return false;
+      } catch (e) {
+        this.toastError('保存楼栋失败：' + (e.message || e));
+        return false;
       }
     },
 
@@ -1237,6 +1284,43 @@
       plan = plan === 'pro' ? 'pro' : 'basic';
       this._applyPlanLocal(mid, plan, planUntil || '');
       this.sync_({ action: 'saveVendorPlan', vendorId: mid, plan: plan, planUntil: planUntil || '' });
+    },
+    // Admin 一键造测试商家：固定账号 test_basic / test_pro（密码 1234），灌 3 道菜让客户端能跑完整链路。
+    // 幂等：账号已存在 → 不再造，只把套餐校正回 plan 参数后返回原 id（保证按钮所见即所得）。
+    // 商家身上打 isTest='TEST'，可被「清除测试数据」按钮一并扫掉，不污染真实数据。
+    ensureTestMerchant(plan) {
+      plan = plan === 'pro' ? 'pro' : 'basic';
+      var username = plan === 'pro' ? 'test_pro' : 'test_basic';
+      var password = '1234';
+      var existed = state.accounts.find(function (a) { return a.username === username; });
+      if (existed) {
+        // 校正套餐（防止被「设为 basic」改过后按钮失真）
+        this.setVendorPlan(existed.merchantId, plan, plan === 'pro' ? '2099-12-31' : '');
+        return { id: existed.merchantId, username: username, password: password, created: false };
+      }
+      var hubId = (state.hubs[0] && state.hubs[0].id) || '';
+      var displayName = plan === 'pro' ? '🧪 测试·专业版商家' : '🧪 测试·基础版商家';
+      var id = this.registerMerchant({
+        name: displayName,
+        desc: plan === 'pro' ? '专业版功能测试用（会员/CRM/券）' : '基础版功能测试用',
+        logo: plan === 'pro' ? '💎' : '🆓',
+        tngLabel: displayName, hubId: hubId,
+        username: username, password: password, isTest: true,
+      });
+      if (plan === 'pro') this.setVendorPlan(id, 'pro', '2099-12-31');
+      // 灌 3 道菜，让客户端能完整下单（不灌的话菜单空，customer 走不通）
+      var m = this.getMerchant(id), self = this;
+      if (m) {
+        [
+          { name: '测试招牌饭', price: 8.0, emoji: '🍱', desc: '测试用·标准菜品', category: '食物' },
+          { name: '测试小食',   price: 4.5, emoji: '🍢', desc: '测试用·常规小吃', category: '小吃' },
+          { name: '测试饮料',   price: 2.5, emoji: '🥤', desc: '测试用·饮料',     category: '饮料' },
+        ].forEach(function (seed) {
+          var it = { id: utils.genId('it'), name: seed.name, price: seed.price, available: true, emoji: seed.emoji, image: '', desc: seed.desc, category: seed.category, stock: null };
+          m.menu.push(it); self._syncProduct(id, it);
+        });
+      }
+      return { id: id, username: username, password: password, created: true };
     },
     // 记一笔收款（默认顺带续费：升到该套餐 + 到期日=本期结束）
     recordPayment(pmt) {

@@ -24,7 +24,7 @@
 
 | 端 | 页面 | 账号 | 说明 |
 |---|---|---|---|
-| 管理员 | `admin.html` | `admin` / `admin123` | 也可点「⚡一键登入」 |
+| 管理员 | `admin.html` | `admin` / `admin123` | 手填账密；正式入口走 Worker Basic Auth 网关 |
 | 商家 | `merchant.html` | `shop1` / `1234` | 阿强快餐 · **PRO**（有会员/统计） |
 | 商家 | `merchant.html` | `shop2` / `1234` | 叻沙小馆 · 基础版 |
 | 商家 | `merchant.html` | `shop3` / `1234` | 炸鸡工坊 · 已过期PRO |

@@ -299,15 +299,11 @@ function pickElText(p, sel) {
   await adm.goto(BASE + '/admin.html?demo', { waitUntil: 'domcontentloaded' });
   await adm.waitForTimeout(800);
 
-  // -- E1. Admin one-click login --
+  // -- E1. Admin 登录 --（一键登入入口早已下线，统一手填）
   await safe('E1 admin login', async () => {
-    if (await adm.locator('button:has-text("一键登入")').first().isVisible().catch(() => false)) {
-      await adm.locator('button:has-text("一键登入")').first().click();
-    } else {
-      await adm.locator('input').first().fill('admin');
-      await adm.locator('input[type="password"]').first().fill('admin123');
-      await adm.locator('button:has-text("登录"), button:has-text("登入")').first().click();
-    }
+    await adm.locator('input').first().fill('admin');
+    await adm.locator('input[type="password"]').first().fill('admin123');
+    await adm.locator('button:has-text("登录"), button:has-text("登入")').first().click();
     await adm.waitForTimeout(1200);
     await snap(adm, 'E1-admin-home.png');
     note('PASS', 'E1 admin logged in');

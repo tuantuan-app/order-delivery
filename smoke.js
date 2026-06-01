@@ -38,11 +38,14 @@ async function tryClick(p, selector, ms = 600) {
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const ctx = await browser.newContext({ viewport: { width: 414, height: 896 } });
-  // Pre-seed customer profile so we skip the gating profile-form and reach actual checkout
+  // Pre-seed customer profile so we skip the gating profile-form and reach actual checkout.
+  // Also pre-seed hub selection — commit 9a99c8e made the community picker a hard gate,
+  // a non-dismissable modal intercepts shop-card clicks until a hub is chosen.
   await ctx.addInitScript(() => {
     localStorage.setItem('canteen_profile_v4', JSON.stringify({
       name: 'Smoke Bot', phone: '0199999991', building: 'A 栋', room: 'T01'
     }));
+    localStorage.setItem('canteen_hub_v1', 'utm'); // 叻沙小馆 / 阿强快餐 / 深夜食堂 都在 utm
   });
 
   // === A. Customer flow ===
@@ -175,13 +178,10 @@ async function tryClick(p, selector, ms = 600) {
     await adm.waitForTimeout(1000);
     await snap(adm, '10-adm-login.png');
 
-    // try one-click login first
-    if (!(await tryClick(adm, 'button:has-text("一键登入")', 800))) {
-      // manual fallback
-      await adm.locator('input').first().fill('admin').catch(() => {});
-      await adm.locator('input[type="password"]').first().fill('admin123').catch(() => {});
-      await tryClick(adm, 'button:has-text("登录"), button:has-text("登入")', 1000);
-    }
+    // admin 登录（一键登入入口早已下线，统一手填）
+    await adm.locator('input').first().fill('admin').catch(() => {});
+    await adm.locator('input[type="password"]').first().fill('admin123').catch(() => {});
+    await tryClick(adm, 'button:has-text("登录"), button:has-text("登入")', 1000);
     await adm.waitForTimeout(800);
     await snap(adm, '11-adm-home.png');
 

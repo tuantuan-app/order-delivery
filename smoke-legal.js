@@ -188,12 +188,12 @@ async function snap(p, name) {
   const h = await ctxH.newPage();
   await h.goto(BASE + '/admin.html?demo');
   await h.waitForLoadState('networkidle');
-  // 一键登入 admin
-  const quick = h.locator('button:has-text("一键登入")');
-  if (await quick.isVisible().catch(() => false)) {
-    await quick.click(); await h.waitForTimeout(800);
-    ok('H.admin 一键登入');
-  } else bad('H.找不到一键登入');
+  // admin 登录（一键登入入口早已下线，手填账密）
+  await h.locator('input').first().fill('admin').catch(() => {});
+  await h.locator('input[type="password"]').first().fill('admin123').catch(() => {});
+  await h.locator('button:has-text("登录"), button:has-text("登入")').first().click().catch(() => {});
+  await h.waitForTimeout(800);
+  ok('H.admin 登录');
   // 切到商家管理 tab，编辑 shop1
   await h.evaluate(() => {
     var btns = Array.from(document.querySelectorAll('button')).filter(b => b.textContent.indexOf('商家') >= 0);

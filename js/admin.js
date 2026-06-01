@@ -165,9 +165,9 @@
               <span class="muted sm" v-if="!(h.buildings||[]).length">暂无楼栋</span>
             </div>
             <div class="cat-add" style="margin-top:6px">
-              <input :id="'bld-'+h.id" :ref="el => bldInputs[h.id]=el" placeholder="添加楼栋，如：A 栋" @keyup.enter="addBld(h)" style="font-size:12px" />
-              <button class="btn btn--sm btn--primary" @click="addBld(h)">＋ 添加</button>
-              <button class="btn btn--sm btn--ghost" @click="bulkBld(h)" style="font-size:11px">📝 批量编辑</button>
+              <input :id="'bld-'+h.id" :ref="el => bldInputs[h.id]=el" :disabled="pending[h.id]" placeholder="添加楼栋，如：A 栋" @keyup.enter="addBld(h)" style="font-size:12px" />
+              <button class="btn btn--sm btn--primary" @click="addBld(h)" :disabled="pending[h.id]">{{ pending[h.id] ? '添加中…' : '＋ 添加' }}</button>
+              <button class="btn btn--sm btn--ghost" @click="bulkBld(h)" :disabled="pending[h.id]" style="font-size:11px">📝 批量编辑</button>
             </div>
           </div>
           <div class="admin-shop__actions">
@@ -196,11 +196,24 @@
         else store.showToast('请复制此链接：' + link, 'info');
       }
       function del(h) { if (window.confirm('删除社区「' + h.name + '」？该社区下的商家不会被删除，但需重新分配社区。')) store.removeHub(h.id); }
-      function addBld(h) {
+      // 串行 + 等服务器回包再清空：之前并发 Enter 多个楼栋，乱序响应整列覆盖会"丢"楼栋
+      const pending = reactive({}); // { hubId: true } 当 hub 有正在飞的请求
+      async function addBld(h) {
+        if (pending[h.id]) return; // 上一个还没回，先别按
         var el = bldInputs[h.id]; var name = el ? el.value.trim() : '';
         if (!name) return;
-        store.adminAddBuilding(h.id, name);
-        if (el) el.value = '';
+        if ((h.buildings || []).indexOf(name) >= 0) {
+          if (el) { el.value = ''; el.focus(); }
+          return; // 本地去重：避免给后端发明显重复
+        }
+        pending[h.id] = true;
+        try {
+          const ok = await store.adminAddBuilding(h.id, name);
+          if (ok && el) el.value = ''; // 只在成功时清空，失败保留让用户改了再试
+        } finally {
+          pending[h.id] = false;
+          if (el) el.focus(); // 连续添加时光标回到输入框
+        }
       }
       function rmBld(h, name) { if (window.confirm('从 ' + h.name + ' 删除楼栋「' + name + '」？\n\n该楼栋将从商家可选的覆盖范围中移除。')) store.adminRemoveBuilding(h.id, name); }
       function bulkBld(h) {
@@ -210,7 +223,7 @@
         var list = input.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
         store.adminSaveBuildings(h.id, list);
       }
-      return { store, form, error, bldInputs, count, add, rename, copyLink, del, addBld, rmBld, bulkBld };
+      return { store, form, error, bldInputs, count, add, rename, copyLink, del, addBld, rmBld, bulkBld, pending };
     },
   };
 

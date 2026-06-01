@@ -28,6 +28,22 @@
           </p>
         </div>
 
+        <!-- 一键造测试商家：清掉 demo 数据后想接着测，没真实商家 → 这俩按钮就是入口 -->
+        <div class="card" style="background:#f0f9ff;border:1px solid #bae6fd">
+          <div class="card__label">🏪 一键造测试商家 <span class="muted sm">基础版 + 专业版，固定账号方便重复登录</span></div>
+          <p class="sm" style="margin:6px 0 10px;line-height:1.6">
+            两个商家都打 <b>isTest</b> 标记，可被下方<b>「清除测试数据」</b>扫掉。<b>重复点同一按钮幂等</b>（不会堆出第二个，会自动把套餐校正回该按钮对应版本）。每个商家附带 3 道菜，让客户端能下完整单。
+          </p>
+          <div class="field-row">
+            <button class="btn btn--primary" style="flex:1" @click="mkTestShop('basic')" :disabled="tsb">🆓 基础版商家<br><span class="sm" style="opacity:.85">test_basic / 1234</span></button>
+            <button class="btn btn--primary" style="flex:1" @click="mkTestShop('pro')" :disabled="tsb">💎 专业版商家<br><span class="sm" style="opacity:.85">test_pro / 1234</span></button>
+          </div>
+          <div class="test-out" v-if="lastShop" style="margin-top:10px">
+            <div class="test-line"><span>{{ lastShop.created ? '✅ 已创建' : '↻ 已存在（套餐已校正）' }}</span><b>{{ lastShop.username }} / {{ lastShop.password }}</b></div>
+            <div class="test-line"><span>下一步</span><b class="sm" style="font-weight:500">顶部「👁 视角 → 🏪 商家 → 选 {{ lastShop.displayName }}」</b></div>
+          </div>
+        </div>
+
         <!-- 健康检查 -->
         <div class="card">
           <div class="card__label">🩺 后端健康检查</div>
@@ -131,6 +147,18 @@
       const hb = ref(false); const cb = ref(false); const rb = ref(false);
       const health = ref(null);
       const cnt = reactive({ orders: 0, payments: 0 });
+      // 一键造测试商家（基础版/专业版）
+      const tsb = ref(false); const lastShop = ref(null);
+      function mkTestShop(plan) {
+        tsb.value = true;
+        try {
+          var r = store.ensureTestMerchant(plan);
+          var displayName = plan === 'pro' ? '🧪 测试·专业版商家' : '🧪 测试·基础版商家';
+          lastShop.value = Object.assign({}, r, { displayName: displayName });
+          store.toastSuccess((r.created ? '✅ 已创建 ' : '↻ 已存在 ') + displayName + ' — ' + r.username + ' / ' + r.password);
+        } catch (e) { store.toastError('创建失败：' + (e.message || e)); }
+        finally { tsb.value = false; }
+      }
       // 系统配额监控
       const ub = ref(false); const usage = ref(null);
       // Worker 健康检查（手动触发）
@@ -182,7 +210,7 @@
         finally { rb.value = false; }
       }
       onMounted(refreshCnt);
-      return { online, n, hb, cb, rb, health, cnt, ub, usage, cck, check, loadUsage, runHealth, runCheck, makeOrders, flow, simAll, clear, resetSeed };
+      return { online, n, hb, cb, rb, health, cnt, ub, usage, cck, check, tsb, lastShop, mkTestShop, loadUsage, runHealth, runCheck, makeOrders, flow, simAll, clear, resetSeed };
     },
   };
 })();
