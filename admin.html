@@ -3,6 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!-- 守卫：直接访问 GitHub Pages 的 admin.html 立刻跳到 Worker Basic Auth 网关
+       Worker 会反代回这同一个 HTML，但访问域名变 *.workers.dev，绕开此跳转 -->
+  <script>
+    (function () {
+      try {
+        if (location.hostname === 'tuantuan-app.github.io') {
+          location.replace('https://tuantuan-push.keidev.workers.dev/admin');
+        }
+      } catch (_) {}
+    })();
+  </script>
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://script.google.com https://*.workers.dev https://*.googleusercontent.com; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'" />
   <meta name="robots" content="noindex, nofollow" />
   <title>团团 · 内部</title>
