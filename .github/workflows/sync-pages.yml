@@ -17,7 +17,7 @@ jobs:
           cp styles.css styles-crm.css dist/
           cp manifest.webmanifest sw.js dist/
           mkdir -p dist/js dist/vendor
-          cp js/config.js js/api.js js/store.js js/student.js js/main.js js/merchant.js js/merchant-crm.js js/merchant-ringer.js js/notify.js js/console.js js/contact.js js/admin.js dist/js/
+          cp js/config.js js/api.js js/store.js js/student.js js/main.js js/merchant.js js/merchant-crm.js js/merchant-ringer.js js/notify.js js/console.js js/contact.js js/admin.js js/admin-test.js dist/js/
           cp vendor/vue.global.prod.js dist/vendor/
 
       - name: Deploy to Pages repo
