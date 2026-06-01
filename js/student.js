@@ -141,15 +141,32 @@
     template: `
       <div class="m-list">
         <header class="home-hd">
-          <div class="home-hd__loc" @click="editAddr=true"><span class="home-hd__pin">📍</span><span class="home-hd__loc-t">{{ locText }}</span><span class="home-hd__loc-edit" v-if="store.profile">切换 ›</span></div>
-          <h1 class="home-hd__title">{{ hubName || '想吃点什么？' }}</h1>
+          <div class="home-hd__loc" @click="onLocClick"><span class="home-hd__pin">📍</span><span class="home-hd__loc-t">{{ hubName || '请选择社区' }}</span><span class="home-hd__loc-edit">切换 ›</span></div>
+          <h1 class="home-hd__title">{{ store.profile ? ('你好，' + store.profile.name) : '想吃点什么？' }}</h1>
         </header>
-        <div class="home-search">
+        <div class="home-search" v-if="store.currentHub">
           <span class="home-search__ic">🔍</span>
           <input v-model="q" placeholder="搜索商家或菜品" aria-label="搜索商家或菜品" />
           <button class="home-search__x" v-if="q" @click="q=''" aria-label="清除搜索">✕</button>
         </div>
-        <div class="home-sec"><span>{{ q ? '搜索结果' : '全部商家' }}</span><span class="home-sec__n">{{ filtered.length }}</span></div>
+        <div class="home-sec" v-if="store.currentHub"><span>{{ q ? '搜索结果' : '全部商家' }}</span><span class="home-sec__n">{{ filtered.length }}</span></div>
+
+        <!-- 首次访问 / 未选社区 → 弹选择器（强制选才能看商家） -->
+        <div class="modal" v-if="showHubPicker" @click.self="dismissPicker">
+          <div class="modal__panel hub-picker">
+            <div class="hub-picker__title">📍 你在哪个社区？</div>
+            <p class="hub-picker__sub">选了社区，才能看到附近的商家。可以随时点顶部切换。</p>
+            <div class="hub-picker__list">
+              <button class="hub-picker__item" v-for="h in store.state.hubs" :key="h.id" @click="pickHub(h.id)">
+                <span class="hub-picker__ico">🏫</span>
+                <span class="hub-picker__name">{{ h.name }}</span>
+                <span class="hub-picker__arrow">›</span>
+              </button>
+              <div v-if="!store.state.hubs.length" class="empty">还没有社区开通服务</div>
+            </div>
+          </div>
+        </div>
+
         <div class="modal" v-if="editAddr" @click.self="editAddr=false">
           <div class="modal__panel">
             <profile-form :buildings="store.hubBuildings(store.currentHub)" @done="editAddr=false"></profile-form>
@@ -192,18 +209,38 @@
         // 营业中的店排前面，休息/打烊的沉到底部（稳定排序，组内保持原顺序）——别让用户滑过一堆关着的店
         return base.slice().sort((a, b) => (store.isOpen(b) ? 1 : 0) - (store.isOpen(a) ? 1 : 0));
       });
-      const hubName = store.currentHubLabel();
+      const hubName = computed(() => store.currentHubLabel());
       const locText = computed(() => {
-        if (!store.profile) return hubName || '团团';
+        if (!store.profile) return hubName.value || '团团';
         var a = store.currentAddress();
-        return a ? ('送至 · ' + a.building + ' ' + a.room) : (hubName || '团团');
+        return a ? ('送至 · ' + a.building + ' ' + a.room) : (hubName.value || '团团');
+      });
+      // 社区选择器：未选社区 → 强制弹（除非系统里只 1 个社区，那自动选）
+      const _pickerDismissed = ref(false);
+      const showHubPicker = computed(() => {
+        if (store.currentHub) return false;
+        if (_pickerDismissed.value) return false;
+        return true;
+      });
+      function pickHub(id) { store.setCurrentHub(id); _pickerDismissed.value = false; }
+      function dismissPicker() { /* 必须选，禁止 dismiss */ }
+      function onLocClick() {
+        // 顶部 "切换" → 重新选社区
+        store.setCurrentHub('');
+        _pickerDismissed.value = false;
+      }
+      // 单社区系统：自动选，省一步
+      onMounted(function () {
+        if (!store.currentHub && store.state.hubs && store.state.hubs.length === 1) {
+          store.setCurrentHub(store.state.hubs[0].id);
+        }
       });
       function deliveryText(m) {
         if (!m.settings.deliveryOffered) return '仅自取';
         return m.settings.deliveryMode === 'fixed' ? '定时配送' : ('约 ' + m.settings.flexibleMin + '-' + m.settings.flexibleMax + ' 分钟');
       }
       function hasPromo(m) { return m.menu.some((it) => it.available && store.utils.hasDiscount(it)); }
-      return { store, q, editAddr, merchants, filtered, matchedDishes, hubName, locText, deliveryText, hasPromo };
+      return { store, q, editAddr, merchants, filtered, matchedDishes, hubName, locText, deliveryText, hasPromo, showHubPicker, pickHub, dismissPicker, onLocClick };
     },
   };
 

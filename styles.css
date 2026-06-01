@@ -892,3 +892,26 @@ input:focus:not(:focus-visible), select:focus:not(:focus-visible), textarea:focu
 .app-footer a { color: #6b7280; text-decoration: none; margin: 0 6px; }
 .app-footer a:hover { color: #10b981; }
 .app-footer__sep { color: #d1d5db; }
+
+/* ============= Modal 底部安全区（避开 tabbar + iOS 安全区） ============= */
+.modal__panel {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 72px) !important;
+  /* 56px tabbar + 16px breathing room = 72px → 弹窗底部不被任何底栏「视觉」遮挡 */
+}
+
+/* ============= 社区选择器（HubPicker，强制首次选社区） ============= */
+.hub-picker { padding-top: 4px; }
+.hub-picker__title { font-size: 18px; font-weight: 700; color: #111827; margin-bottom: 6px; }
+.hub-picker__sub { color: #6b7280; font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
+.hub-picker__list { display: flex; flex-direction: column; gap: 10px; }
+.hub-picker__item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; background: #f0fdf4; border: 1px solid #bbf7d0;
+  border-radius: 12px; cursor: pointer; transition: all .15s;
+  text-align: left; font: inherit; color: #111827;
+}
+.hub-picker__item:hover { background: #dcfce7; transform: translateY(-1px); }
+.hub-picker__item:active { transform: translateY(0); }
+.hub-picker__ico { font-size: 26px; flex-shrink: 0; }
+.hub-picker__name { flex: 1; font-size: 15px; font-weight: 600; }
+.hub-picker__arrow { color: #10b981; font-size: 20px; }

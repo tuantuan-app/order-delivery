@@ -374,7 +374,18 @@
       return p;
     } catch (e) { return null; }
   }
-  function readHub() { try { return (new URLSearchParams(location.search).get('hub') || '').trim().toLowerCase(); } catch (e) { return ''; } }
+  // 客户选的社区：优先 URL ?hub= → 其次 localStorage → 否则空（首次访问 → 弹选择器）
+  var HUB_KEY = 'canteen_hub_v1';
+  function readHub() {
+    try {
+      var u = (new URLSearchParams(location.search).get('hub') || '').trim().toLowerCase();
+      if (u) { try { localStorage.setItem(HUB_KEY, u); } catch (e) {} return u; }
+      var s = localStorage.getItem(HUB_KEY); return s ? s.trim().toLowerCase() : '';
+    } catch (e) { return ''; }
+  }
+  function writeHub(hubId) {
+    try { localStorage.setItem(HUB_KEY, String(hubId || '').toLowerCase()); } catch (e) {}
+  }
   function loadAuth() {
     try {
       const r = localStorage.getItem(AUTH_KEY); if (!r) return null;
@@ -446,6 +457,11 @@
     get visibleMerchants() { return this.currentHub ? state.merchants.filter((m) => (m.hubId || '') === this.currentHub) : state.merchants; },
     hubLabel(id) { const h = state.hubs.find((x) => x.id === id); return h ? h.name : (id ? id.toUpperCase() + ' 团团' : ''); },
     currentHubLabel() { return this.currentHub ? this.hubLabel(this.currentHub) : ''; },
+    setCurrentHub(hubId) {
+      var id = String(hubId || '').toLowerCase().trim();
+      this.currentHub = id;
+      writeHub(id);
+    },
     addHub(id, name) { id = (id || '').trim().toLowerCase(); if (!id) return false; if (state.hubs.some((h) => h.id === id)) return false; const nm = (name || '').trim() || id.toUpperCase() + ' 团团'; state.hubs.push({ id, name: nm }); this.sync_({ action: 'saveHub', hubId: id, name: nm }); return true; },
     updateHub(id, name) { const h = state.hubs.find((x) => x.id === id); if (h) { h.name = (name || '').trim() || h.name; this.sync_({ action: 'saveHub', hubId: id, name: h.name }); } },
     removeHub(id) { state.hubs = state.hubs.filter((h) => h.id !== id); this.sync_({ action: 'removeHub', hubId: id }); },
