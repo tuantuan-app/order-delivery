@@ -11,8 +11,8 @@
  * v3 既有：请求去重（同参数并发合并）+ 超时控制
  */
 (function () {
-  // 这 5 个读 action 由 Worker 缓存。其它（写、admin、auth）一律 GAS 直连
-  var CACHEABLE = { getOrder: 1, getVendorOrders: 1, getStorefront: 1, getOrdersByPhone: 1, listHubs: 1 };
+  // 这 6 个读 action 由 Worker 缓存。其它（写、admin、auth）一律 GAS 直连
+  var CACHEABLE = { getOrder: 1, getVendorOrders: 1, getStorefront: 1, getOrdersByPhone: 1, listHubs: 1, listPublicVendors: 1 };
 
 window.api = {
   base() { return (window.APP_CONFIG && window.APP_CONFIG.apiBase) || ''; },
@@ -74,6 +74,8 @@ window.api = {
   vendorLogin(username, password) { return this.post({ action: 'vendorLogin', username, password }, 15000); }, // 登录 15s 超时
   adminLogin(username, password) { return this.post({ action: 'adminLogin', username, password }); },
   listHubs() { return this.post({ action: 'listHubs' }); },
+  // 客户端首页：公开商家列表（已过滤 TEST + 已停业）
+  listPublicVendors() { return this._dedupe('lpv', function () { return window.api.post({ action: 'listPublicVendors' }); }); },
   getMembership(vendorId, phone) { return this.post({ action: 'getMembership', vendorId, phone }); },
   addHubBuilding(hubId, name, token) { return this.post({ action: 'addHubBuilding', hubId, name, token }); },
   removeHubBuilding(hubId, name, token) { return this.post({ action: 'removeHubBuilding', hubId, name, token }); },

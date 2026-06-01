@@ -459,6 +459,46 @@
         }
       } catch (e) {}
     },
+    // 在线模式下：从后端拉真实商家列表（已过滤 TEST + 停业），清掉本地硬编码 demo
+    async loadPublicVendors() {
+      if (!(window.api && window.api.enabled())) return;
+      try {
+        var r = await window.api.listPublicVendors();
+        if (r && r.ok && Array.isArray(r.vendors)) {
+          // 重置 state.merchants 为真后端数据；保留 admin 已登入的本店设置（如有）
+          var keepIds = (auth.user && auth.user.role === 'merchant' && auth.user.merchantId) ? [auth.user.merchantId] : [];
+          var kept = state.merchants.filter(function (m) { return keepIds.indexOf(m.id) >= 0; });
+          var fresh = r.vendors.map(function (v) {
+            var existing = state.merchants.find(function (m) { return m.id === v.vendorId; });
+            return existing ? Object.assign(existing, {
+              name: v.shopName || existing.name,
+              logo: v.logo || existing.logo,
+              tngLabel: v.tngLabel || existing.tngLabel,
+              plan: v.plan || 'basic',
+              planUntil: v.planUntil || '',
+              hubId: v.hubId || existing.hubId,
+              open: typeof v.open === 'boolean' ? v.open : existing.open,
+              settings: v.settings ? Object.assign(defaultSettings('fixed'), v.settings) : existing.settings,
+              payQRs: Array.isArray(v.payQRs) ? v.payQRs : existing.payQRs,
+              categories: Array.isArray(v.categories) && v.categories.length ? v.categories : existing.categories,
+            }) : {
+              id: v.vendorId, name: v.shopName, desc: '', logo: v.logo || '🏪',
+              open: typeof v.open === 'boolean' ? v.open : true,
+              tngLabel: v.tngLabel || '', plan: v.plan || 'basic', planUntil: v.planUntil || '',
+              hubId: v.hubId || '',
+              settings: v.settings ? Object.assign(defaultSettings('fixed'), v.settings) : defaultSettings('fixed'),
+              payQRs: Array.isArray(v.payQRs) ? v.payQRs : [],
+              categories: Array.isArray(v.categories) && v.categories.length ? v.categories : ['食物', '小吃', '饮料'],
+              menu: [],
+            };
+          });
+          // 合并：fresh + 商家自己的本店（如果不在 fresh 里）
+          var merged = fresh.slice();
+          kept.forEach(function (m) { if (!merged.find(function (x) { return x.id === m.id; })) merged.push(m); });
+          state.merchants = merged;
+        }
+      } catch (e) {}
+    },
     hubBuildings(hubId) { var h = state.hubs.find(function (x) { return x.id === hubId; }); return (h && h.buildings) || []; },
     toggleCoverage(mid, name) { var m = this.getMerchant(mid); if (!m) return; if (!m.settings.coverage) m.settings.coverage = []; var i = m.settings.coverage.indexOf(name); if (i >= 0) m.settings.coverage.splice(i, 1); else m.settings.coverage.push(name); this._syncMerchantConfig(mid); },
     async addBuildingToHub(mid, name) {
@@ -1285,7 +1325,7 @@
         username: utils.sanitize(data.username || '', 30),
         password: data.password
       };
-      state.merchants.push({ id: id, name: cleanData.name, desc: cleanData.desc, logo: cleanData.logo, open: true, hubId: cleanData.hubId, tngLabel: cleanData.tngLabel, settings: defaultSettings('fixed'), payQRs: [], categories: ['食物', '小吃', '饮料'], menu: [] });
+      state.merchants.push({ id: id, name: cleanData.name, desc: cleanData.desc, logo: cleanData.logo, open: true, hubId: cleanData.hubId, tngLabel: cleanData.tngLabel, settings: defaultSettings('fixed'), payQRs: [], categories: ['食物', '小吃', '饮料'], menu: [], isTest: data.isTest ? 'TEST' : '' });
       state.accounts.push({ username: cleanData.username, role: 'merchant', merchantId: id });
       this._syncVendor(id);
       return id;
@@ -1298,6 +1338,7 @@
       if (data.logo !== undefined) clean.logo = utils.sanitize(data.logo, 10);
       if (data.hubId !== undefined) clean.hubId = utils.sanitize(data.hubId, 30).toLowerCase();
       if (data.tngLabel !== undefined) clean.tngLabel = utils.sanitize(data.tngLabel, 60);
+      if (data.isTest !== undefined) clean.isTest = data.isTest ? 'TEST' : '';
       Object.assign(m, clean);
       this._syncVendor(id);
     },
@@ -1306,7 +1347,7 @@
     _syncVendor(id) {
       var m = this.getMerchant(id), a = this.accountOf(id);
       if (!m || !a) return;
-      this.sync_({ action: 'upsertVendor', vendor: { vendorId: id, username: a.username, shopName: m.name, logo: m.logo, tngLabel: m.tngLabel, hubId: m.hubId || '', active: !!m.open } });
+      this.sync_({ action: 'upsertVendor', vendor: { vendorId: id, username: a.username, shopName: m.name, logo: m.logo, tngLabel: m.tngLabel, hubId: m.hubId || '', active: !!m.open, isTest: m.isTest || '' } });
     },
     removeMerchant(id) {
       var idx = state.merchants.findIndex(function (m) { return m.id === id; }); if (idx < 0) return;

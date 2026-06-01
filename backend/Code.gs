@@ -504,6 +504,8 @@ function doPost(e) {
       case 'vendorLogin':       result = vendorLogin_(body); break;
       case 'adminLogin':        result = adminLogin_(body); break;
       case 'listHubs':          result = { ok: true, hubs: cacheRead_(TAB_HUBS).rows }; break;
+      // 公开：客户端首页用 → 过滤 active=true + isTest != 'TEST'
+      case 'listPublicVendors': result = listPublicVendors_(); break;
       case 'placeOrder':        result = withLock_(function () { return placeOrder_(body); }); break;
       case 'attachScreenshot':  result = withLock_(function () { return attachScreenshot_(body); }); break;
       case 'cancelOrder':       result = withLock_(function () { return cancelOrder_(body); }); break;
@@ -785,7 +787,23 @@ function getStorefront_(body) {
   var vid = sanitize_(String(body.vendorId || ''), 50);
   var v = cacheFind_(TAB_VENDORS, 'vendorId', vid);
   if (!v) return { ok: false, error: '商家不存在' };
+  // 测试商家不对外开放：直链访问也拒绝（即使有人猜到 vendorId）
+  if (String(v.isTest || '').toUpperCase() === 'TEST') return { ok: false, error: '商家不存在' };
   return { ok: true, vendor: vendorPublic_(v), menu: menuOf_(v.vendorId), serverTime: new Date().toISOString() };
+}
+
+// 公开商家列表（客户端首页用）：过滤 active=false + isTest='TEST'
+// 仅返回展示必需字段，密码哈希等敏感字段全部剥离
+function listPublicVendors_() {
+  var rows = cacheRead_(TAB_VENDORS).rows.filter(function (v) {
+    if (String(v.isTest || '').toUpperCase() === 'TEST') return false; // 测试商家隐身
+    if (v.active === false || String(v.active).toUpperCase() === 'FALSE') return false;
+    return true;
+  });
+  var vendors = rows.map(function (v) {
+    return vendorPublic_(v);
+  });
+  return { ok: true, vendors: vendors, serverTime: new Date().toISOString() };
 }
 
 // -- 商家配置 --

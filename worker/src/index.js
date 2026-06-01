@@ -412,6 +412,7 @@ const READ_TTL = {
   getStorefront: 60,
   getOrdersByPhone: 15,
   listHubs: 3600,
+  listPublicVendors: 30, // 客户端首页 — 30s TTL 平衡刷新感和缓存
 };
 
 const READ_KEY_FIELDS = {
@@ -420,6 +421,7 @@ const READ_KEY_FIELDS = {
   getStorefront: ['vendorId'],
   getOrdersByPhone: ['phone'],
   listHubs: [],
+  listPublicVendors: [],
 };
 
 // 写入 → 受影响缓存键。返回 [{ action, ...params }] 数组
@@ -442,6 +444,9 @@ const INVALIDATION = {
   addHubBuilding: () => ([{ action: 'listHubs' }]),
   saveHub: () => ([{ action: 'listHubs' }]),
   removeHub: () => ([{ action: 'listHubs' }]),
+  // admin 增删改商家 → 影响公开商家列表
+  upsertVendor: () => ([{ action: 'listPublicVendors' }]),
+  removeVendor: () => ([{ action: 'listPublicVendors' }]),
 };
 
 function buildCacheRequest(action, params) {

@@ -225,7 +225,7 @@
           <div class="admin-shop">
             <div class="shop-card__logo">{{ m.logo }}</div>
             <div class="admin-shop__body">
-              <div class="shop-card__name">{{ m.name }}<span class="pill-tag" :class="m.open ? 'pill-tag--open' : 'pill-tag--closed'">{{ m.open ? '营业中' : '休息中' }}</span><span class="plan-badge" :class="'plan-badge--'+store.planStatus(m).key">{{ store.planStatus(m).label }}</span></div>
+              <div class="shop-card__name">{{ m.name }}<span class="pill-tag" :class="m.open ? 'pill-tag--open' : 'pill-tag--closed'">{{ m.open ? '营业中' : '休息中' }}</span><span class="plan-badge" :class="'plan-badge--'+store.planStatus(m).key">{{ store.planStatus(m).label }}</span><span v-if="m.isTest" class="plan-badge" style="background:#fef3c7;color:#92400e">🧪 测试</span></div>
               <div class="shop-card__desc">{{ m.desc }}</div>
               <div class="shop-card__meta">{{ m.menu.length }} 个商品 · {{ store.ordersOf(m.id).length }} 张订单 · 📍 {{ m.hubId ? store.hubLabel(m.hubId) : '未分配社区' }}</div>
               <div class="cred" v-if="acc(m)">🔑 登录账号：<b>{{ acc(m).username }}</b></div>
@@ -272,6 +272,11 @@
               </div>
               <p class="muted sm" v-if="!isNew">账号不可改；留空密码则保持原密码不变。</p>
             </div>
+            <!-- 测试商家标记：客户端首页不会显示，仅 admin 可见用于测试隔离 -->
+            <label class="fee-toggle" style="margin-top:10px;padding:10px;background:#fef3c7;border-radius:6px">
+              <input type="checkbox" v-model="form.isTest" />
+              <span>🧪 <b>测试商家</b>（客户端首页隐身，仅 admin 可见。上线后测试新功能用）</span>
+            </label>
             <p class="error" v-if="error">{{ error }}</p>
             <button class="btn btn--primary btn--block" @click="save">{{ isNew ? '创建并发放账号' : '保存修改' }}</button>
           </div>
@@ -280,7 +285,7 @@
     `,
     setup() {
       const editing = ref(null); const isNew = ref(false); const error = ref('');
-      const form = reactive({ name: '', desc: '', logo: '🏪', tngLabel: '', hubId: '', username: '', password: '' });
+      const form = reactive({ name: '', desc: '', logo: '🏪', tngLabel: '', hubId: '', username: '', password: '', isTest: false });
       const showPw = ref(false);
       function randomPwd() {
         // 8 位随机字母数字（去除易混 0/O/I/l）
@@ -296,11 +301,11 @@
         ); else window.prompt('复制密码：', form.password);
       }
       function acc(m) { return store.accountOf(m.id); }
-      function openNew() { isNew.value = true; error.value = ''; editing.value = 'new'; Object.assign(form, { name: '', desc: '', logo: '🏪', tngLabel: '', hubId: (store.state.hubs[0] && store.state.hubs[0].id) || '', username: '', password: '1234' }); }
+      function openNew() { isNew.value = true; error.value = ''; editing.value = 'new'; Object.assign(form, { name: '', desc: '', logo: '🏪', tngLabel: '', hubId: (store.state.hubs[0] && store.state.hubs[0].id) || '', username: '', password: '1234', isTest: false }); }
       function openEdit(m) {
         isNew.value = false; error.value = ''; editing.value = m;
         const a = acc(m);
-        Object.assign(form, { name: m.name, desc: m.desc, logo: m.logo, tngLabel: m.tngLabel, hubId: m.hubId || '', username: a ? a.username : '', password: '' });
+        Object.assign(form, { name: m.name, desc: m.desc, logo: m.logo, tngLabel: m.tngLabel, hubId: m.hubId || '', username: a ? a.username : '', password: '', isTest: !!m.isTest });
       }
       function save() {
         if (!form.name.trim()) return (error.value = '请填写店名');
@@ -308,9 +313,9 @@
           if (!form.username.trim()) return (error.value = '请填写商家登录账号');
           if (store.usernameTaken(form.username)) return (error.value = '该账号已被占用');
           if (!form.password) return (error.value = '请设置密码');
-          store.registerMerchant({ name: form.name.trim(), desc: form.desc.trim(), logo: form.logo.trim() || '🏪', tngLabel: form.tngLabel.trim() || form.name.trim(), hubId: form.hubId, username: form.username.trim(), password: form.password });
+          store.registerMerchant({ name: form.name.trim(), desc: form.desc.trim(), logo: form.logo.trim() || '🏪', tngLabel: form.tngLabel.trim() || form.name.trim(), hubId: form.hubId, username: form.username.trim(), password: form.password, isTest: !!form.isTest });
         } else {
-          store.updateMerchant(editing.value.id, { name: form.name.trim(), desc: form.desc.trim(), logo: form.logo.trim() || '🏪', tngLabel: form.tngLabel.trim() || form.name.trim(), hubId: form.hubId });
+          store.updateMerchant(editing.value.id, { name: form.name.trim(), desc: form.desc.trim(), logo: form.logo.trim() || '🏪', tngLabel: form.tngLabel.trim() || form.name.trim(), hubId: form.hubId, isTest: !!form.isTest });
           if (form.password) store.setMerchantPassword(editing.value.id, form.password);
         }
         error.value = ''; editing.value = null;

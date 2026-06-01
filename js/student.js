@@ -103,6 +103,9 @@
       function startNew() { store.state.activeOrderId = null; store.backToMerchants(); }
       if (store.activeOrder && !ui.preview) ui.studentStep = 'status';
       if (!ui.preview) store.loadMyOrders(); // 进入即按本机手机号拉「我的订单」(状态以后端为准)
+      // 客户端进入即拉公开商家列表（在线模式 → 替换本地 seedState；离线 → 用本地 demo）
+      store.loadPublicVendors();
+      store.loadHubs(); // 拉社区共享楼栋池（地址簿/送达切换用）
       // 底部导航
       const showNav = computed(() => ui.studentTab !== 'home' || ui.studentStep === 'merchants');
       function goTab(t) { ui.studentTab = t; if (t === 'home' && ['orders', 'me'].indexOf(ui.studentStep) < 0 && !store.activeOrder) ui.studentStep = 'merchants'; }
