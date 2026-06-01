@@ -189,7 +189,7 @@
             if (mode === 'admin') {
               const a = await window.api.adminLogin(u, password.value);
               if (a && a.ok) { store.setAuthUser({ username: u, role: 'admin', merchantId: null }, a.token); return; }
-              if (store.login(u, password.value) && store.auth.user.role === 'admin') return;
+              // 后端明确拒绝（返回 ok:false）→ 不本地兜底，避免「假登入」状态
               error.value = (a && a.error) || '账号或密码错误';
               return;
             }
@@ -200,11 +200,11 @@
               store.loadMerchantData(r.vendor.vendorId); // 后台并行加载，不阻塞登录
               return;
             }
-            if (store.login(u, password.value) && store.auth.user.role === 'merchant') return; // 本地兜底
+            // 后端明确拒绝 → 不本地兜底
             error.value = (r && r.error) || '账号或密码错误';
           } catch (e) {
-            if (store.login(u, password.value) && store.auth.user.role === mode) return; // 后端连不上时回退本地演示
-            // 用户面：不暴露异常技术细节，统一引导刷新
+            // 仅网络异常（fetch throw）才考虑本地兜底（?demo 用）
+            if (store.login(u, password.value) && store.auth.user.role === mode) return;
             error.value = mode === 'admin' ? ('无法连接后端：' + e) : '网络有点慢，请刷新页面再试';
           } finally { busy.value = false; }
           return;

@@ -615,12 +615,18 @@
     adminData: { orders: [], vendors: [], loaded: false },
     async refreshAdminData() {
       if (!(window.api && window.api.enabled())) return;
+      // 没拿到 admin token 直接 bail（避免「假登入」状态下乱报错）
+      // 真 admin 登录成功 → auth.token 有值 → 才查后端
+      if (!auth.token) return;
       try {
         var results = await Promise.all([this._send({ action: 'listAllOrders' }), this._send({ action: 'listVendors' })]);
         if (results[0] && results[0].ok) this.adminData.orders = results[0].orders || [];
         if (results[1] && results[1].ok) this.adminData.vendors = results[1].vendors || [];
         this.adminData.loaded = true;
-      } catch (e) { this.toastError('加载经营数据失败'); }
+      } catch (e) {
+        // admin 端不掩饰技术错误，方便排查
+        this.toastError('加载经营数据失败：' + ((e && e.message) || e));
+      }
     },
     analytics() {
       if (window.api && window.api.enabled()) {
