@@ -406,7 +406,12 @@
     selectedAddrId: null, // 地址簿当前选中的地址 id（不持久化；空 → 走默认地址）
   });
   const _auth = loadAuth() || {};
-  const auth = reactive({ user: _auth.user || (_auth.username ? _auth : null), token: _auth.token || '' });
+  // 在线模式下：localStorage 里没 token = 上次「假登入」残留 → 视为未登录
+  // （避免改密码后/前端 bug 导致空 token 还能进 admin 页面）
+  var _online = !!(window.APP_CONFIG && window.APP_CONFIG.apiBase);
+  var _hasValidAuth = _auth.user && (!_online || _auth.token);
+  if (!_hasValidAuth && _auth.user) { try { localStorage.removeItem(AUTH_KEY); } catch (e) {} }
+  const auth = reactive({ user: _hasValidAuth ? (_auth.user || (_auth.username ? _auth : null)) : null, token: _hasValidAuth ? (_auth.token || '') : '' });
   if (auth.user && auth.user.merchantId) ui.merchantId = auth.user.merchantId;
 
   // ---- v3: Toast 通知系统 ----
