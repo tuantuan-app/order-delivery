@@ -52,12 +52,35 @@ export default {
           headers: { 'WWW-Authenticate': 'Basic realm="团团 TuanTuan Admin"' },
         });
       }
-      // 从 Pages 取 admin.html 并注入 <base> 使资源正常加载
+      // 从 Pages 取 admin.html，反代时做两件事：
+      //   1. 注入 <base href="...Pages..."> 让相对路径资源走 Pages
+      //   2. 删掉 admin.html 原 CSP <meta>，由 Worker 通过 HTTP 头下发更宽 CSP
+      //      （原 script-src 'self' = workers.dev，会挡掉从 Pages 加载的 JS → 整页白屏）
       try {
         const pagesResp = await fetch('https://tuantuan-app.github.io/admin.html');
         let html = await pagesResp.text();
+        // 删除 admin.html 内嵌 CSP（用 HTTP 头版本替代）
+        html = html.replace(/<meta\s+http-equiv=["']Content-Security-Policy["'][^>]*>\s*/i, '');
+        // 注入 base href
         html = html.replace('<head>', '<head><base href="https://tuantuan-app.github.io/">');
-        return new Response(html, { headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-cache' } });
+        // 通过 HTTP 头下发宽松 CSP（允许 Pages 域名加载脚本/样式/图片/连接）
+        const csp = "default-src 'self' https://tuantuan-app.github.io; "
+                  + "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://tuantuan-app.github.io; "
+                  + "style-src 'self' 'unsafe-inline' https://tuantuan-app.github.io; "
+                  + "img-src 'self' data: blob: https:; "
+                  + "connect-src 'self' https://script.google.com https://*.workers.dev https://*.googleusercontent.com; "
+                  + "font-src 'self' data: https://tuantuan-app.github.io; "
+                  + "object-src 'none'; frame-ancestors 'none'; base-uri 'self' https://tuantuan-app.github.io";
+        return new Response(html, {
+          headers: {
+            'Content-Type': 'text/html;charset=utf-8',
+            'Cache-Control': 'no-cache',
+            'Content-Security-Policy': csp,
+            'X-Content-Type-Options': 'nosniff',
+            'X-Frame-Options': 'DENY',
+            'Referrer-Policy': 'no-referrer',
+          }
+        });
       } catch (e) {
         return new Response('Failed to load admin page', { status: 502 });
       }
