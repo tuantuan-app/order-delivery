@@ -33,13 +33,22 @@
 
 export default {
   async fetch(req, env) {
-    if (req.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
+    // H20 fix: CORS 白名单（之前 '*' 任意站点都能 fetch 你的 Worker）。
+    // OPTIONS 预检也要按 Origin 决定回响，否则浏览器拒绝跨站。
+    const reqOrigin = req.headers.get('Origin') || '';
+    if (req.method === 'OPTIONS') return cors(new Response(null, { status: 204 }), reqOrigin);
     const url = new URL(req.url);
 
     // ---- Admin 工具：一次性清空 Sheet 数据（Basic Auth 保护 + workerSecret 转给 GAS） ----
     // 访问 https://tuantuan-push.keidev.workers.dev/admin/wipe → 浏览器弹密码框
     // 输入 admin 凭据 → Worker 调 GAS wipeAllData → 清表 → 返回 JSON
     if (url.pathname === '/admin/wipe') {
+      // C22 fix: POST-only。防 CSRF：攻击者在受害者浏览器（已通过 Basic Auth）的页面里嵌
+      // <img src="https://tuantuan-push.keidev.workers.dev/admin/wipe"> 就能触发 GET 清库；
+      // 限定 POST 后必须自己构造 fetch，CORS 也会挡住跨站。
+      if (req.method !== 'POST') {
+        return new Response('Use POST. This endpoint is destructive — GET disabled to prevent CSRF.', { status: 405, headers: { 'Allow': 'POST' } });
+      }
       const AUTH_USER = env.ADMIN_AUTH_USER || 'admin';
       const AUTH_PASS = env.ADMIN_AUTH_PASS || '';
       if (!AUTH_PASS) return new Response('AUTH not configured', { status: 500 });
@@ -73,9 +82,10 @@ export default {
     if (url.pathname === '/admin' || url.pathname === '/admin/') {
       const AUTH_USER = env.ADMIN_AUTH_USER || 'admin';
       const AUTH_PASS = env.ADMIN_AUTH_PASS || '';
+      // H24 fix: fail-closed。之前 !AUTH_PASS 时直接 302 跳公开 admin.html，等于配置疏忽就完全没门。
+      // 现在改为 500：宁可暂时挂掉 admin，也不能让未鉴权的人进。
       if (!AUTH_PASS) {
-        // 未配置 → 直接重定向到公开 admin（向后兼容）
-        return Response.redirect('https://tuantuan-app.github.io/admin.html', 302);
+        return new Response('Admin authentication not configured (set ADMIN_AUTH_PASS in Worker env)', { status: 500 });
       }
       const auth = req.headers.get('Authorization');
       if (!auth || !checkBasicAuth(auth, AUTH_USER, AUTH_PASS)) {
@@ -119,35 +129,43 @@ export default {
     }
 
     if (url.pathname === '/health') {
-      return cors(json({ ok: true, ts: Date.now(), service: 'tuantuan-push', endpoints: ['/push', '/api', '/health'], cron: ['hourly health check'] }));
+      return cors(json({ ok: true, ts: Date.now(), service: 'tuantuan-push', endpoints: ['/push', '/api', '/health'], cron: ['hourly health check'] }), reqOrigin);
     }
 
     // 手动触发健康检查（admin 可在 admin.html 调用，绕过 1h cron 等候）
+    // H25 fix: 加 Basic Auth。之前匿名可调 → 任何人能远程烧 GAS 配额（每次调用 GAS ~2-3s）。
     if (url.pathname === '/check' && req.method === 'POST') {
-      return cors(json(await runHealthCheck(env)));
+      const AUTH_USER = env.ADMIN_AUTH_USER || 'admin';
+      const AUTH_PASS = env.ADMIN_AUTH_PASS || '';
+      if (!AUTH_PASS) return cors(json({ ok: false, error: 'admin auth not configured' }, 500), reqOrigin);
+      const auth = req.headers.get('Authorization');
+      if (!auth || !checkBasicAuth(auth, AUTH_USER, AUTH_PASS)) {
+        return cors(new Response('Auth required', { status: 401, headers: { 'WWW-Authenticate': 'Basic realm="团团 Check"' } }), reqOrigin);
+      }
+      return cors(json(await runHealthCheck(env)), reqOrigin);
     }
     if (url.pathname === '/api') {
-      return cors(await handleApi(req, env));
+      return cors(await handleApi(req, env), reqOrigin);
     }
     if (url.pathname !== '/push' || req.method !== 'POST') {
-      return cors(json({ ok: false, error: 'not found' }, 404));
+      return cors(json({ ok: false, error: 'not found' }, 404), reqOrigin);
     }
 
     // 鉴权
     const secret = req.headers.get('X-Worker-Secret') || '';
     if (!env.WORKER_SECRET || secret !== env.WORKER_SECRET) {
-      return cors(json({ ok: false, error: 'unauthorized' }, 401));
+      return cors(json({ ok: false, error: 'unauthorized' }, 401), reqOrigin);
     }
 
     // 解析 body
     let body;
-    try { body = await req.json(); } catch { return cors(json({ ok: false, error: 'invalid json' }, 400)); }
+    try { body = await req.json(); } catch { return cors(json({ ok: false, error: 'invalid json' }, 400), reqOrigin); }
     const { subscription, payload, ttl, urgency } = body || {};
     if (!subscription || !subscription.endpoint || !subscription.keys) {
-      return cors(json({ ok: false, error: 'subscription required' }, 400));
+      return cors(json({ ok: false, error: 'subscription required' }, 400), reqOrigin);
     }
     if (!env.VAPID_JWK || !env.VAPID_PUBLIC || !env.VAPID_SUBJECT) {
-      return cors(json({ ok: false, error: 'worker not configured (missing VAPID secrets)' }, 500));
+      return cors(json({ ok: false, error: 'worker not configured (missing VAPID secrets)' }, 500), reqOrigin);
     }
 
     try {
@@ -161,10 +179,10 @@ export default {
         vapidSubject: env.VAPID_SUBJECT,
       });
       const ok = r.status >= 200 && r.status < 300;
-      return cors(json({ ok, status: r.status, body: r.body }, 200));
+      return cors(json({ ok, status: r.status, body: r.body }, 200), reqOrigin);
     } catch (e) {
       console.error('push error', e);
-      return cors(json({ ok: false, error: String((e && e.message) || e) }, 500));
+      return cors(json({ ok: false, error: String((e && e.message) || e) }, 500), reqOrigin);
     }
   },
 
@@ -188,10 +206,28 @@ function checkBasicAuth(header, user, pass) {
   } catch { return false; }
 }
 
-function cors(res) {
-  res.headers.set('Access-Control-Allow-Origin', '*');
+// H20 fix: CORS Origin 白名单。只允许 Pages 生产域 + 本地测试 + 任何 *.workers.dev（自己反代回自己）。
+// Worker 端点本身没 cookie/auth-state（用 token in body），CORS 主要防：让你的 Worker 被别人挂着免费用。
+const CORS_ALLOW = new Set([
+  'https://tuantuan-app.github.io',
+  'http://localhost:8777',
+  'http://127.0.0.1:8777',
+]);
+function corsOrigin(origin) {
+  if (!origin) return ''; // 同源 / 无 Origin → 无需设头
+  if (CORS_ALLOW.has(origin)) return origin;
+  // workers.dev 自反代（admin 网关 fetch /api）也放行
+  try { if (new URL(origin).hostname.endsWith('.workers.dev')) return origin; } catch (_) {}
+  return '';
+}
+function cors(res, origin) {
+  const allow = corsOrigin(origin || '');
+  if (allow) {
+    res.headers.set('Access-Control-Allow-Origin', allow);
+    res.headers.set('Vary', 'Origin');
+  }
   res.headers.set('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-  res.headers.set('Access-Control-Allow-Headers', 'Content-Type, X-Worker-Secret');
+  res.headers.set('Access-Control-Allow-Headers', 'Content-Type, X-Worker-Secret, Authorization');
   return res;
 }
 function json(o, status = 200) {
@@ -434,16 +470,38 @@ const INVALIDATION = {
       { action: 'getOrdersByPhone', phone: o.phone },
     ].filter(x => Object.values(x).every(v => v != null && v !== ''));
   },
-  updateOrderStatus: (b) => ([{ action: 'getOrder', orderId: b && b.orderId }]).filter(x => x.orderId),
-  cancelOrder: (b) => ([{ action: 'getOrder', orderId: b && b.orderId }]).filter(x => x.orderId),
-  attachScreenshot: (b) => ([{ action: 'getOrder', orderId: b && b.orderId }]).filter(x => x.orderId),
+  // H2 fix: 之前 updateOrderStatus 只失效 getOrder，没失效 getVendorOrders → 商家界面
+  // 看到的订单列表里状态可能是缓存的旧值。saveVendorConfig 同理：商家改店设置后，
+  // 客户端 listPublicVendors 还是旧 open/hub 状态。再补几个 admin 楼栋操作。
+  updateOrderStatus: (b) => ([
+    { action: 'getOrder', orderId: b && b.orderId },
+    { action: 'getVendorOrders', vendorId: b && b.vendorId },
+  ]).filter(x => x.orderId || x.vendorId),
+  cancelOrder: (b) => ([
+    { action: 'getOrder', orderId: b && b.orderId },
+    { action: 'getVendorOrders', vendorId: b && b.vendorId },
+  ]).filter(x => x.orderId || x.vendorId),
+  attachScreenshot: (b) => ([
+    { action: 'getOrder', orderId: b && b.orderId },
+    { action: 'getVendorOrders', vendorId: b && b.vendorId },
+  ]).filter(x => x.orderId || x.vendorId),
   saveProduct: (b) => ([{ action: 'getStorefront', vendorId: b && b.vendorId }]).filter(x => x.vendorId),
   updateProduct: (b) => ([{ action: 'getStorefront', vendorId: b && b.vendorId }]).filter(x => x.vendorId),
   removeProduct: (b) => ([{ action: 'getStorefront', vendorId: b && b.vendorId }]).filter(x => x.vendorId),
-  saveVendorConfig: (b) => ([{ action: 'getStorefront', vendorId: b && b.vendorId }]).filter(x => x.vendorId),
+  saveVendorConfig: (b) => ([
+    { action: 'getStorefront', vendorId: b && b.vendorId },
+    { action: 'listPublicVendors' }, // 公开商家列表 (open/hub/plan) 可能变了
+  ]).filter(x => x.vendorId || x.action === 'listPublicVendors'),
+  saveVendorPlan: (b) => ([
+    { action: 'getStorefront', vendorId: b && b.vendorId },
+    { action: 'listPublicVendors' },
+  ]).filter(x => x.vendorId || x.action === 'listPublicVendors'),
   addHubBuilding: () => ([{ action: 'listHubs' }]),
   saveHub: () => ([{ action: 'listHubs' }]),
   removeHub: () => ([{ action: 'listHubs' }]),
+  // H2 fix: 之前漏了 admin 楼栋删除/批量保存 → 客户端楼栋下拉残留
+  removeHubBuilding: () => ([{ action: 'listHubs' }]),
+  saveHubBuildings: () => ([{ action: 'listHubs' }]),
   // admin 增删改商家 → 影响公开商家列表
   upsertVendor: () => ([{ action: 'listPublicVendors' }]),
   removeVendor: () => ([{ action: 'listPublicVendors' }]),

@@ -325,6 +325,7 @@
     const subtotal = Number(r.subtotal) || items.reduce((s, it) => s + it.price * it.qty, 0);
     return {
       id: r.orderId || r.id || utils.genOrderId(), merchantId: r.vendorId,
+      hubId: r.hubId || r.HubID || r.hub_id || '',
       createdAt: r.createdAt ? (Date.parse(r.createdAt) || Date.now()) : Date.now(), createdAtText: String(r.createdAt || ''),
       customer: { name: r.customerName || '', phone: r.phone || '', building: r.building || '', room: r.room || '' }, remark: r.remark || '',
       items, subtotal, packagingFee: Number(r.packagingFee) || 0, deliveryFee: Number(r.deliveryFee) || 0,
@@ -336,10 +337,37 @@
 
   function mapRemoteItem(it) {
     const avail = it.available === true || String(it.available).toUpperCase() === 'TRUE';
-    const stock = (it.stock === '' || it.stock === null || it.stock === undefined) ? null : Number(it.stock);
+    const n = Number(it.stock);
+    const stock = (it.stock === '' || it.stock === null || it.stock === undefined || isNaN(n)) ? null : n;
     let optionGroups = []; try { optionGroups = it.optionsJson ? JSON.parse(it.optionsJson) : []; } catch (e) {}
     let discount = null; try { discount = it.discountJson ? JSON.parse(it.discountJson) : null; } catch (e) {}
     return { id: it.itemId, name: it.name, price: Number(it.price) || 0, available: avail, emoji: it.emoji || '🍽️', image: it.image || '', desc: it.desc || '', category: it.category || '食物', stock: stock, optionGroups: Array.isArray(optionGroups) ? optionGroups : [], discount: discount };
+  }
+
+  // C18 fix: 为 sync 队列生成稳定的去重键。每种 action 显式取它真正的"实体 ID"，
+  // 而不是用顶层 vendorId/itemId/orderId（嵌套对象里的 ID 顶层永远 undefined）。
+  // 同键 → 同实体的连续操作合并；不同键 → 即使同 action 也分别入队。
+  function syncKey(p) {
+    var a = p.action;
+    switch (a) {
+      case 'saveProduct':       return a + ':' + (p.product && p.product.itemId);
+      case 'addPayment':        return a + ':' + (p.payment && p.payment.payId);
+      case 'upsertVendor':      return a + ':' + (p.vendor && p.vendor.vendorId);
+      case 'removeProduct':     return a + ':' + p.itemId;
+      case 'updateOrderStatus':
+      case 'cancelOrder':
+      case 'attachScreenshot':  return a + ':' + p.orderId;
+      case 'saveVendorConfig':
+      case 'saveVendorPlan':    return a + ':' + p.vendorId;
+      case 'addHubBuilding':
+      case 'removeHubBuilding': return a + ':' + p.hubId + ':' + p.name; // 同 hub 不同 name 不合并
+      case 'saveHub':
+      case 'removeHub':
+      case 'saveHubBuildings':  return a + ':' + p.hubId;
+      case 'saveSubscription':  return a + ':' + (p.subscription && p.subscription.endpoint);
+      case 'placeOrder':        return a + ':' + (p.order && p.order.orderId);
+      default:                  return a + ':' + JSON.stringify(p).slice(0, 200); // 兜底，永不误合并不同 payload
+    }
   }
 
   // ---- v3: 序列化前剥离 base64 大字段 ----
@@ -351,8 +379,9 @@
         if (m.menu) m.menu.forEach(function (it) { if (utils.isImg(it.image)) it.image = ''; });
       });
       if (d.orders) d.orders.forEach(function (o) {
-        if (utils.isImg(o.screenshot)) o.screenshot = '';
-        if (utils.isImg(o.deliveryPhoto)) o.deliveryPhoto = '';
+        // C20 fix: only strip already-uploaded shots (Drive URLs), keep pending base64
+        if (utils.isImg(o.screenshot) && o.imgStatus === 'ok') o.screenshot = '';
+        if (utils.isImg(o.deliveryPhoto) && o.imgStatus === 'ok') o.deliveryPhoto = '';
       });
       return JSON.stringify(d);
     } catch (e) { return s; }
@@ -759,16 +788,16 @@
       return r;
     },
     // v3: 300ms 防抖合并窗口
+    // C18 fix: 去重键之前用顶层 vendorId/itemId/orderId，但 addPayment/saveProduct/upsertVendor
+    // 的 ID 都在嵌套对象里 → 顶层三字段全 undefined → 同 action 不同 ID 的两个调用被错合并 →
+    // 第二笔 payment 把第一笔覆盖 → 财务数据丢失。改用 syncKey() 为每种 action 显式取真实 ID。
     sync_(payload) {
       if (!(window.api && window.api.enabled())) return;
       var self = this;
-      // 合并同类操作：如果队列中已有同 action+同 ID 的操作，替换之
+      var newKey = syncKey(payload);
       var dupIdx = -1;
       for (var i = 0; i < self._syncQueue.length; i++) {
-        var q = self._syncQueue[i];
-        if (q.action === payload.action && q.vendorId === payload.vendorId && q.itemId === payload.itemId && q.orderId === payload.orderId) {
-          dupIdx = i; break;
-        }
+        if (syncKey(self._syncQueue[i]) === newKey) { dupIdx = i; break; }
       }
       if (dupIdx >= 0) self._syncQueue[dupIdx] = payload;
       else self._syncQueue.push(payload);
@@ -788,6 +817,8 @@
       self.syncBusy = false;
       if (self.failedSyncs.length) self.toastError('网络有点慢，请刷新页面再试');
       else self.syncError = '';
+      // C19 fix: if more items queued during flush, process them
+      if (self._syncQueue.length) setTimeout(function () { self._flushSync(); }, 50);
     },
     async retrySync() {
       if (!this.failedSyncs.length || this.syncBusy) return;
@@ -933,8 +964,14 @@
         }) };
         if (!this.profile.addresses.some(function (a) { return a.isDefault; })) this.profile.addresses[0].isDefault = true;
       } else if (prev && Array.isArray(prev.addresses) && prev.addresses.length) {
-        // 已存在地址簿 + 只改 name/phone：保留 addresses
-        this.profile = { name: name, phone: phone, addresses: prev.addresses };
+        // 已存在地址簿 + 更新 name/phone + building/room（更新默认地址）
+        var addrs = prev.addresses.map(function (a) {
+          var updated = Object.assign({}, a);
+          if (p.building !== undefined) updated.building = utils.sanitize(p.building, 60);
+          if (p.room !== undefined) updated.room = utils.sanitize(p.room, 30);
+          return updated;
+        });
+        this.profile = { name: name, phone: phone, addresses: addrs };
       } else {
         // 首次填号或老数据：把 building/room 作为第一条默认地址
         this.profile = { name: name, phone: phone, addresses: [{ id: 'a' + Date.now(), label: '默认地址', building: utils.sanitize(p.building, 60), room: utils.sanitize(p.room, 30), isDefault: true }] };
@@ -1124,9 +1161,30 @@
 
     // 状态流转
     // 商家端的乐观状态变更：盖 _localMutAt 时间戳，避免在途的旧 poll 把刚改的状态冲回去（见 applyVendorOrders 的保护窗）
-    approveOrder(id) { var o = this.getOrder(id); if (o) { o.status = 'cooking'; o._localMutAt = Date.now(); try { window.merchantRinger && window.merchantRinger.stop(id); } catch (_) {} this.sync_({ action: 'updateOrderStatus', orderId: id, status: 'cooking' }); } },
-    rejectOrder(id, reason) { var o = this.getOrder(id); if (o) { o.status = 'rejected'; o.rejectReason = reason || '商家未通过对账'; o._localMutAt = Date.now(); try { window.merchantRinger && window.merchantRinger.stop(id); } catch (_) {} this.sync_({ action: 'updateOrderStatus', orderId: id, status: 'rejected', rejectReason: o.rejectReason }); } },
-    advanceOrder(id) { var o = this.getOrder(id); if (!o) return; var f = ['pending', 'cooking', 'delivering', 'delivered']; var i = f.indexOf(o.status); if (i >= 0 && i < f.length - 1) { o.status = f[i + 1]; o._localMutAt = Date.now(); this.sync_({ action: 'updateOrderStatus', orderId: id, status: o.status, deliveryPhoto: o.status === 'delivered' ? o.deliveryPhoto : '' }); } },
+    // C2 fix: status guards prevent invalid transitions
+    approveOrder(id) { var o = this.getOrder(id); if (o && o.status === 'pending') { o.status = 'cooking'; o._localMutAt = Date.now(); try { window.merchantRinger && window.merchantRinger.stop(id); } catch (_) {} this.sync_({ action: 'updateOrderStatus', orderId: id, status: 'cooking' }); } },
+    rejectOrder(id, reason) {
+      var o = this.getOrder(id);
+      if (o && o.status === 'pending') {
+        o.status = 'rejected'; o.rejectReason = reason || '商家未通过对账'; o._localMutAt = Date.now();
+        try { window.merchantRinger && window.merchantRinger.stop(id); } catch (_) {}
+        // H16 fix: optimistically restore stock for local/demo mode
+        if (o.items && o.items.length) {
+          var mid = o.merchantId; var m = this.getMerchant(mid);
+          if (m && m.menu) {
+            o.items.forEach(function (it) {
+              var menuItem = m.menu.find(function (x) { return x.id === it.id; });
+              if (menuItem && menuItem.stock !== null && menuItem.stock !== undefined && !isNaN(Number(menuItem.stock))) {
+                menuItem.stock = Number(menuItem.stock) + Number(it.qty || 0);
+              }
+            });
+          }
+        }
+        this.sync_({ action: 'updateOrderStatus', orderId: id, status: 'rejected', rejectReason: o.rejectReason });
+      }
+    },
+    // C2 fix: advanceOrder only from cooking→delivering→delivered (pending must go through approveOrder)
+    advanceOrder(id) { var o = this.getOrder(id); if (!o) return; var f = ['cooking', 'delivering', 'delivered']; var i = f.indexOf(o.status); if (i >= 0 && i < f.length - 1) { o.status = f[i + 1]; o._localMutAt = Date.now(); this.sync_({ action: 'updateOrderStatus', orderId: id, status: o.status, deliveryPhoto: o.status === 'delivered' ? o.deliveryPhoto : '' }); } },
     setDeliveryPhoto(id, d) { var o = this.getOrder(id); if (o) { o.deliveryPhoto = d; o._localMutAt = Date.now(); if (d) this.sync_({ action: 'updateOrderStatus', orderId: id, status: o.status, deliveryPhoto: d }); } },
     // 批量送达：一批订单一次性标记已送达，并共用同一张到货照片（同地点多客户，不必逐个拍照发）
     batchDeliver(ids, photo) {
@@ -1244,7 +1302,7 @@
     },
 
     // ===== 计费 / 套餐管理（admin 端）=====
-    PRO_PRICE: 29,  // 专业版月费（RM）
+    PRO_PRICE: 39,  // 专业版月费（RM）
     BASIC_PRICE: 29, // 基础版月费（RM）
     _daysUntil(ymd) { try { return Math.ceil((new Date(ymd + 'T23:59').getTime() - Date.now()) / 86400000); } catch (e) { return 9999; } },
     planStatus(m) {
@@ -1326,6 +1384,8 @@
     recordPayment(pmt) {
       var row = { payId: utils.genId('pay'), vendorId: pmt.vendorId, amount: Number(pmt.amount) || 0, plan: pmt.plan === 'pro' ? 'pro' : 'basic', paidAt: pmt.paidAt || utils.todayYMD(), periodStart: pmt.periodStart || '', periodEnd: pmt.periodEnd || '', note: pmt.note || '', isTest: pmt.isTest ? 'TEST' : '' };
       state.payments.unshift(row);
+      // H33 fix: pro plan requires periodEnd (no permanent/unlimited free pro)
+      if (row.plan === 'pro' && !row.periodEnd) { this.toastError('专业版套餐必须设置到期日'); return null; }
       if (pmt.applyPlan !== false) this._applyPlanLocal(pmt.vendorId, row.plan, row.periodEnd || undefined);
       this.sync_({ action: 'addPayment', payment: row, applyPlan: pmt.applyPlan !== false });
       return row;

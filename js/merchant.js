@@ -88,7 +88,11 @@
       </div>
     `,
     setup() {
-      function contact() { store.showToast('请通过平台客服/管理员开通专业版', 'info'); }
+      // H19 fix: provide real contact path instead of dead-end toast
+      function contact() {
+        var msg = '你好，我想升级团团专业版（PRO），请帮我开通。';
+        window.open('https://wa.me/60132831238?text=' + encodeURIComponent(msg), '_blank');
+      }
       return { store, contact };
     },
   };
@@ -173,7 +177,7 @@
               <div class="modal__label">📸 到货照片（选填，送达后客户会看到）</div>
               <label class="upload__drop sm-drop" v-if="!current.deliveryPhoto"><input type="file" accept="image/*" @change="onPhoto($event, current)" hidden /><span class="upload__plus">＋</span><span>拍照 / 选择到货照片</span></label>
               <div class="upload__preview" v-else><img :src="current.deliveryPhoto" alt="" /><button class="link-btn" @click="store.setDeliveryPhoto(current.id,'')">移除</button></div>
-              <button class="link-btn sm" @click="store.setDeliveryPhoto(current.id, store.utils.sampleDelivery())">用示例照片测试</button>
+              <button v-if="isDev" class="link-btn sm" @click="store.setDeliveryPhoto(current.id, store.utils.sampleDelivery())">用示例照片测试</button>
               <div class="modal__actions"><span class="chip st-delivering">配送中</span><button class="btn btn--primary" @click="store.advanceOrder(current.id)">确认送达</button></div>
             </template>
             <div class="modal__done" v-else>
@@ -187,7 +191,7 @@
               <div class="upload__preview" v-if="current.deliveryPhoto"><img :src="current.deliveryPhoto" alt="" @click="openShot(current.deliveryPhoto)" /><button class="link-btn" @click="store.setDeliveryPhoto(current.id,'')">移除</button></div>
               <template v-else>
                 <label class="upload__drop sm-drop"><input type="file" accept="image/*" @change="onPhoto($event, current)" hidden /><span class="upload__plus">＋</span><span>补拍 / 选择到货照片</span></label>
-                <button class="link-btn sm" @click="store.setDeliveryPhoto(current.id, store.utils.sampleDelivery())">用示例照片测试</button>
+                <button v-if="isDev" class="link-btn sm" @click="store.setDeliveryPhoto(current.id, store.utils.sampleDelivery())">用示例照片测试</button>
               </template>
             </div>
             <!-- 通知客户：WhatsApp 一键发到其手机号 / 复制文案(微信/手动) -->
@@ -240,7 +244,7 @@
               <div class="modal__label">📸 到货照片（选填，这一张发给选中的 {{ batchSel.length }} 单）</div>
               <label class="upload__drop sm-drop" v-if="!batchPhoto"><input type="file" accept="image/*" @change="onBatchPhoto" hidden /><span class="upload__plus">＋</span><span>拍照 / 选择到货照片</span></label>
               <div class="upload__preview" v-else><img :src="batchPhoto" alt="" /><button class="link-btn" @click="batchPhoto=''">移除</button></div>
-              <button class="link-btn sm" @click="batchPhoto=store.utils.sampleDelivery()">用示例照片测试</button>
+              <button v-if="isDev" class="link-btn sm" @click="batchPhoto=store.utils.sampleDelivery()">用示例照片测试</button>
               <button class="btn btn--primary btn--block" @click="batchDeliverGo">✅ 全部送达（{{ batchSel.length }} 单）</button>
               <button class="btn btn--block btn--ghost" @click="batchCopyGo">📋 复制群发文案（粘到 WhatsApp 广播 / 微信群发）</button>
             </template>
@@ -284,24 +288,45 @@
           revenue: os.filter((o) => o.status === 'delivered').reduce((s, o) => s + (o.total || 0), 0),
         };
       });
-      // v3: 自适应轮询 —— 根据后端返回动态调整；看详情时暂停
-      let timer = null; let polling = false; let currentInterval = 15000;
+      // v4: 自适应轮询 + 隐藏暂停 + 起步对齐后端闲时（30s）—— 省 GAS 配额
+      //   起步 30s = 后端 getVendorOrders 在"全闲"时返回的间隔（line 879）
+      //   有 pending 单时后端会拉到 8s；首次响应 1 tick 内对齐，不再无脑 15s 起步
+      //   tab 隐藏（锁屏/切 app/换 tab）立即暂停 setInterval，可见再 poll 一次重启
+      let timer = null; let polling = false; let currentInterval = 30000;
       async function poll() {
         if (current.value || polling || !(window.api && window.api.enabled())) return;
+        if (document.visibilityState === 'hidden') return; // 后台不烧 GAS
         polling = true;
         try {
           const r = await window.api.getVendorOrders(ui.merchantId, store.auth.token);
           if (r && r.ok) {
             store.applyVendorOrders(ui.merchantId, r.orders);
-            if (r.pollIntervalMs && r.pollIntervalMs !== currentInterval) {
+            if (r.pollIntervalMs !== undefined && r.pollIntervalMs !== currentInterval) {
               currentInterval = r.pollIntervalMs;
               if (timer) clearInterval(timer);
-              timer = setInterval(poll, currentInterval);
+              if (currentInterval > 0) timer = setInterval(poll, currentInterval);
+              // pollIntervalMs === 0：后端示意停止（防御性，目前商家端不会返 0，但接住保险）
             }
           }
         } catch (e) {} finally { polling = false; }
       }
-      onMounted(() => { if (window.api && window.api.enabled()) { poll(); timer = setInterval(poll, currentInterval); } });
+      function onVisibilityChange() {
+        if (document.visibilityState === 'visible') {
+          // 切回前台：立即追一次（商家最在意"漏单"），并重启 setInterval
+          poll();
+          if (!timer && currentInterval > 0) timer = setInterval(poll, currentInterval);
+        } else {
+          // 切走：停 setInterval（in-flight poll 让它自然返回，没新 tick）
+          if (timer) { clearInterval(timer); timer = null; }
+        }
+      }
+      onMounted(() => {
+        if (window.api && window.api.enabled()) {
+          poll();
+          timer = setInterval(poll, currentInterval);
+          document.addEventListener('visibilitychange', onVisibilityChange);
+        }
+      });
       // 预加载：把列表里的支付截图提前在后台拉好，商家点开订单即秒显（图小、浏览器自动缓存，只拉一次）
       const _preloaded = new Set();
       function preloadShots(list) {
@@ -311,7 +336,10 @@
         });
       }
       watch(orders, (list) => preloadShots(list), { immediate: true });
-      onUnmounted(() => { if (timer) { clearInterval(timer); timer = null; } });
+      onUnmounted(() => {
+        if (timer) { clearInterval(timer); timer = null; }
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+      });
       // 批量送达（同地点多单一次搞定）
       const batchOpen = ref(false); const batchSel = reactive([]); const batchPhoto = ref('');
       const doingOrders = computed(() => orders.value.filter(function (o) { return o.status === 'cooking' || o.status === 'delivering'; }).slice().sort(function (a, b) { return String((a.customer || {}).building || '').localeCompare(String((b.customer || {}).building || '')); }));
@@ -323,7 +351,8 @@
       function openBatch() { batchSel.splice(0); batchPhoto.value = ''; batchOpen.value = true; }
       function toggleBatch(id) { var i = batchSel.indexOf(id); if (i >= 0) batchSel.splice(i, 1); else batchSel.push(id); }
       function onBatchPhoto(e) { pickImage(e, function (d) { batchPhoto.value = d; }); }
-      function batchDeliverGo() { if (!batchSel.length) return; var n = batchSel.length; store.batchDeliver(batchSel.slice(), batchPhoto.value); store.toastSuccess('已送达 ' + n + ' 单' + (batchPhoto.value ? '，到货照片已发给这些客户' : '')); batchSel.splice(0); batchPhoto.value = ''; batchOpen.value = false; }
+      // H13 fix: add confirmation dialog before batch delivery
+      function batchDeliverGo() { if (!batchSel.length) return; var n = batchSel.length; if (!window.confirm('确认将 ' + n + ' 个订单标记为已送达？此操作不可撤回。')) return; store.batchDeliver(batchSel.slice(), batchPhoto.value); store.toastSuccess('已送达 ' + n + ' 单' + (batchPhoto.value ? '，到货照片已发给这些客户' : '')); batchSel.splice(0); batchPhoto.value = ''; batchOpen.value = false; }
       function batchCopyGo() { var m = store.merchant; var shop = m ? m.name : '商家'; var t = '【' + shop + '】您的订单已送达 🎉 请查收，感谢惠顾！'; if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { store.toastSuccess('群发文案已复制'); }, function () { window.prompt('复制群发文案：', t); }); else window.prompt('复制群发文案：', t); }
       function st(s) { return STATUS_TEXT[s] || { label: s, cls: '' }; }
       // 两阶段下单：截图为空 + 超龄(>60s) → 异常单（派生，不依赖后端新状态）
@@ -358,8 +387,10 @@
         if (window.wx && typeof window.wx.previewImage === 'function') { try { window.wx.previewImage({ current: src, urls: [src] }); return; } catch (e) {} }
         zoom.value = src;
       }
-      function openTab(src) { try { const w = window.open('', '_blank'); if (w) { w.document.write('<title>支付截图</title><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="' + src + '" style="max-width:100%"></body>'); w.document.close(); } else { window.open(src, '_blank'); } } catch (e) { window.open(src, '_blank'); } }
-      return { store, ui, current, zoom, orders, stats, groups, filter, timeFilter, timeFilters, counts, filtered, query, searching, reasons, rejecting, reasonChoice, customReason, st, shotState, askReject, confirmReject, onPhoto, openShot, openTab, notifyWhatsApp, copyNotify, batchOpen, batchSel, batchPhoto, doingOrders, openBatch, toggleBatch, onBatchPhoto, batchDeliverGo, batchCopyGo, doingGroups, selectGroup };
+      function openTab(src) { var safeSrc = String(src || ''); if (!/^(https:|data:image\/)/.test(safeSrc)) return; try { const w = window.open('', '_blank'); if (w) { var img = w.document.createElement('img'); img.src = safeSrc; img.style.maxWidth = '100%'; w.document.title = '支付截图'; w.document.body.style.cssText = 'margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh'; w.document.body.appendChild(img); w.document.close(); } else { window.open(safeSrc, '_blank'); } } catch (e) { window.open(safeSrc, '_blank'); } }
+      // H18 fix: only show sample/test buttons in non-prod environments
+      const isDev = (window.APP_CONFIG && window.APP_CONFIG.env !== 'prod');
+      return { store, ui, current, zoom, orders, stats, groups, filter, timeFilter, timeFilters, counts, filtered, query, searching, reasons, rejecting, reasonChoice, customReason, st, shotState, askReject, confirmReject, onPhoto, openShot, openTab, isDev, notifyWhatsApp, copyNotify, batchOpen, batchSel, batchPhoto, doingOrders, openBatch, toggleBatch, onBatchPhoto, batchDeliverGo, batchCopyGo, doingGroups, selectGroup };
     },
   };
 
@@ -658,7 +689,7 @@
           <div class="range-edit" style="margin-top:12px">⏳ 每日接单截止 <input type="time" v-model="store.merchant.settings.flexCloseTime" /></div>
         </div>
         <contact-panel role="merchant"></contact-panel>
-        <button class="btn btn--block btn--ghost danger-text" @click="reset">🗑 清空所有数据并恢复初始</button>
+        <!-- C6 fix: removed resetAll from merchant UI (admin-only now via admin.html test tab) -->
       </div>
     `,
     setup() {
