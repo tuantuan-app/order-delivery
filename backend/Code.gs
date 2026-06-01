@@ -438,13 +438,17 @@ function saveImageToDrive_(dataUrl, name) {
   return 'https://drive.google.com/thumbnail?id=' + file.getId() + '&sz=w1000';
 }
 
-// ==================== SystemLogs（只追加，无删除/修改接口） ====================
+// ==================== 操作日志（v4：只走 Apps Script Logger，不再写 Sheet）====================
+// 决定：放弃 Sheet 日志表
+//   - 节省 GAS 执行时长（每次写一行 Sheet ~ 200ms）
+//   - 节省 Sheet 10M cells 配额（日志增长无上限）
+//   - Apps Script 「执行记录」面板已可查近期 console.log 输出（beta 阶段够用）
+//   - 真出问题再回开 Sheet 日志（一行代码而已）
 function logAction_(actor, action, details) {
   var sanitizedActor = sanitize_(actor, 100);
   var sanitizedAction = sanitize_(action, 100);
   var sanitizedDetails = typeof details === 'string' ? sanitize_(details, 500) : JSON.stringify(details);
   console.log('[%s] %s | %s', sanitizedAction, sanitizedActor, sanitizedDetails);
-  try { sheet_(TAB_LOGS).appendRow([new Date(), sanitizedActor, sanitizedAction, sanitizedDetails]); } catch (e) {}
 }
 
 // ==================== HTTP 入口 ====================
