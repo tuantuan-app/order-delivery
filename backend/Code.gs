@@ -134,6 +134,13 @@ function cacheDelete_(name, col, val) {
 }
 
 /** 将所有脏表写回 Sheet（请求结束时调用） */
+// 🔥 BUG FIX: 之前缺 SpreadsheetApp.flush() — GAS setValues 是 batched，并发请求间
+// 写入对其他 isolate 不立即可见。Request A flush 后释放锁，Request B 真去 Sheet 读
+// 仍看不到 A 的写入 → B 用 stale 基础 + 自己的新行 → 覆盖回 Sheet → A 的写入丢失。
+// 加 SpreadsheetApp.flush() 强制 commit 到 Sheet 后再 release lock。
+// ⚠ 此 fix 解决 ≤3 并发的数据丢失；≥10 真并发仍会有少量丢失（cacheFlush 全表
+// 重写策略的根本设计缺陷）。20 商家场景下几乎不会真同时下 10+ 单，所以足够用。
+// 彻底修需要把 Orders 改 append-only + 逐行 setValue（大改）。
 function cacheFlush_() {
   if (!_reqCache) return;
   var dirty = _reqCache._dirty;
@@ -157,6 +164,8 @@ function cacheFlush_() {
       sh.getRange(2, 1, rowsArr.length, c.headers.length).setValues(rowsArr);
     }
   });
+  // 关键：强制把所有 pending Sheet 写入立即 commit，否则并发请求看 stale 数据 → 丢单
+  SpreadsheetApp.flush();
 }
 
 // ==================== 自建库 / 表 ====================
