@@ -12,7 +12,9 @@
  */
 (function () {
   // 这 6 个读 action 由 Worker 缓存。其它（写、admin、auth）一律 GAS 直连
-  var CACHEABLE = { getOrder: 1, getVendorOrders: 1, getStorefront: 1, getOrdersByPhone: 1, listHubs: 1, listPublicVendors: 1 };
+  // M22 fix: getMembership 进缓存白名单。客户查会员积分按 {vendorId, phone} 缓存
+  //   → 同 vendor+phone 30s 内重复查命中边缘，不烧 GAS（一笔订单结算页可能查 2-3 次）
+  var CACHEABLE = { getOrder: 1, getVendorOrders: 1, getStorefront: 1, getOrdersByPhone: 1, listHubs: 1, listPublicVendors: 1, getMembership: 1 };
 
 window.api = {
   base() { return (window.APP_CONFIG && window.APP_CONFIG.apiBase) || ''; },

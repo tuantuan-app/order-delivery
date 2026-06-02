@@ -832,8 +832,8 @@
     applyRemoteOrder(remote) {
       if (!remote) return;
       var o = this.getOrder(remote.orderId); if (!o) return;
-      // 保护客户端刚点的"取消"：8s 内别让 stale poll 把 'cancelled' 冲回 'pending'
-      var protect = o._localMutAt && (Date.now() - o._localMutAt) < 8000 && remote.status !== o.status;
+      // 保护客户端刚点的"取消"：M8 fix 从 8s 延到 15s（高延迟场景下 GAS 响应慢 + 边缘缓存 TTL 叠加可能超 8s）
+      var protect = o._localMutAt && (Date.now() - o._localMutAt) < 15000 && remote.status !== o.status;
       if (protect) {
         // 仅同步非冲突字段
         if (remote.deliveryPhotoUrl && !o.deliveryPhoto) o.deliveryPhoto = utils.fastDriveImg(remote.deliveryPhotoUrl);
@@ -1552,10 +1552,35 @@
   var _lastPersisted = localStorage.getItem(STORAGE_KEY) || '';
 
   // v3: 分别监听需要持久化的顶层 key，而非整个 state
-  var _persistKeys = ['merchants', 'orders', 'accounts', 'activeOrderId', 'hubs'];
+  // M13 fix: payments 加入持久化 — 之前缺失，刷新页面会丢付款记录（财务对账缺数据）
+  var _persistKeys = ['merchants', 'orders', 'accounts', 'activeOrderId', 'hubs', 'payments'];
   _persistKeys.forEach(function (key) {
     watch(function () { return state[key]; }, function () { persistState(); }, { deep: true });
   });
+
+  // C21 fix: 按 id 增量合并，避免整数组覆盖丢数据
+  // 之前：两个标签页各自编辑不同行 → 后保存的把对方编辑覆盖（last-write-wins）
+  // 现在：按 id 合并，远端有的更新/插入，远端没有且本地无近期 mutation 的也清掉
+  //      保留 _localMutAt 戳保护刚改的本地行（15s 窗口，与 M8 对齐）
+  function mergeById(local, remote, idKey) {
+    if (!Array.isArray(remote)) return;
+    var seen = {};
+    remote.forEach(function (r) {
+      if (!r || r[idKey] == null) return;
+      seen[r[idKey]] = true;
+      var idx = local.findIndex(function (l) { return l[idKey] === r[idKey]; });
+      if (idx >= 0) Object.assign(local[idx], r);
+      else local.push(r);
+    });
+    // 远端真的删了的本地也跟着删；但 _localMutAt 在 15s 内的本地行不动（用户刚改还没同步走）
+    var now = Date.now();
+    for (var i = local.length - 1; i >= 0; i--) {
+      var row = local[i];
+      if (seen[row[idKey]]) continue;
+      if (row._localMutAt && (now - row._localMutAt) < 15000) continue;
+      local.splice(i, 1);
+    }
+  }
 
   // 跨标签页实时同步（v3: 防回声 — 收到 remote change 后 300ms 内不写入）
   window.addEventListener('storage', function (e) {
@@ -1564,11 +1589,12 @@
     _lastPersisted = e.newValue;
     try {
       var d = JSON.parse(e.newValue);
-      // 逐个赋值而非整体替换，保持 Vue 响应性
-      if (d.hubs) state.hubs = d.hubs;
-      if (d.merchants) state.merchants = d.merchants;
-      if (d.orders) state.orders = d.orders;
-      if (d.accounts) state.accounts = d.accounts;
+      // C21 fix: 按 id 增量合并而非整数组覆盖
+      if (d.hubs)     mergeById(state.hubs,     d.hubs,     'id');
+      if (d.merchants) mergeById(state.merchants, d.merchants, 'id');
+      if (d.orders)   mergeById(state.orders,   d.orders,   'id');
+      if (d.accounts) mergeById(state.accounts, d.accounts, 'username');
+      if (d.payments) mergeById(state.payments, d.payments, 'payId');
       if (d.activeOrderId !== undefined) state.activeOrderId = d.activeOrderId;
     } catch (err) {}
   });

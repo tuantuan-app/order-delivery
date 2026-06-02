@@ -449,6 +449,7 @@ const READ_TTL = {
   getOrdersByPhone: 15,
   listHubs: 3600,
   listPublicVendors: 30, // 客户端首页 — 30s TTL 平衡刷新感和缓存
+  getMembership: 30,     // M22 fix: 结算页一笔订单常查 2-3 次，30s TTL 全吃边缘
 };
 
 const READ_KEY_FIELDS = {
@@ -458,6 +459,7 @@ const READ_KEY_FIELDS = {
   getOrdersByPhone: ['phone'],
   listHubs: [],
   listPublicVendors: [],
+  getMembership: ['vendorId', 'phone'], // 按 vendor+phone 唯一定位
 };
 
 // 写入 → 受影响缓存键。返回 [{ action, ...params }] 数组

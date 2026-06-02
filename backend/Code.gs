@@ -317,7 +317,9 @@ function wipeAllData() {
 // HTTP 形式：workerSecret 守卫，可通过 /exec POST 触发
 function wipeAllDataAction_(body) {
   var sp = PropertiesService.getScriptProperties();
-  if (body.workerSecret !== sp.getProperty('WORKER_SECRET')) {
+  var storedSecret = sp.getProperty('WORKER_SECRET');
+  // C14 fix: fail-closed — if WORKER_SECRET is not configured, reject ALL wipe attempts
+  if (!storedSecret || body.workerSecret !== storedSecret) {
     return { ok: false, error: 'unauthorized' };
   }
   var counts = wipeAllData();
@@ -405,18 +407,40 @@ function validateRequired_(val, label) {
   return null;
 }
 
-// ==================== 密码（简单 SHA-256） ====================
-function hashPwd_(password) { return sha256_(password); }
+// ==================== 密码（C3 fix: SHA-256 + 随机 salt） ====================
+// 旧格式：sha256(password) —— 无 salt，全员同密码同 hash，彩虹表秒破
+// 新格式：salt:sha256(salt + ':' + password) —— 每用户独立 16 hex salt
+// 兼容：verifyPwd_ 同时认两种格式；vendorLogin_ 成功后自动升级旧 hash 到新格式
+function hashPwd_(password, salt) {
+  salt = salt || Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+  return salt + ':' + sha256_(salt + ':' + String(password));
+}
+function verifyPwd_(password, stored) {
+  if (!stored) return false;
+  var s = String(stored);
+  if (s.indexOf(':') < 0) return sha256_(password) === s.toLowerCase(); // 旧无盐格式兜底
+  var salt = s.split(':')[0];
+  return hashPwd_(password, salt) === s;
+}
+function isLegacyPwdHash_(stored) {
+  return !!stored && String(stored).indexOf(':') < 0;
+}
 
-// ==================== Token ====================
-function makeToken_(principal) {
+// ==================== Token（C15 fix: 加 role 前缀防提权） ====================
+// 旧格式：base64("principal.ts.sig") —— 商家若用 vendorId='admin' 注册，登录拿到的
+//        token 在 requireAdmin_ 里 === 'admin' 判定通过 → 提权漏洞
+// 新格式：base64("role:principal.ts.sig") —— role 进签名内，commit_role 与 vendorId 分离
+// verifyToken_ 旧返回字符串，新返回 {role, principal} 对象（旧客户端 token 会被拒，强制重登）
+function makeToken_(principal, role) {
+  role = role || 'vendor';
   var secret = PropertiesService.getScriptProperties().getProperty('TOKEN_SECRET');
   if (!secret || secret === 'change-me') {
     secret = Utilities.getUuid();
     PropertiesService.getScriptProperties().setProperty('TOKEN_SECRET', secret);
   }
   var now = Date.now(); // 只调一次！修复 v2 毫秒级竞态 bug
-  var payload = principal + '.' + now;
+  var subject = role + ':' + principal; // role 进签名
+  var payload = subject + '.' + now;
   return Utilities.base64EncodeWebSafe(payload + '.' + sha256_(payload + '.' + secret).slice(0, 24));
 }
 
@@ -425,25 +449,31 @@ function verifyToken_(token) {
     var raw = Utilities.newBlob(Utilities.base64DecodeWebSafe(token)).getDataAsString();
     var parts = raw.split('.');
     if (parts.length < 3) return null;
-    var principal = parts[0], ts = parts[1], sig = parts[2];
+    var subject = parts[0], ts = parts[1], sig = parts[2];
     var secret = PropertiesService.getScriptProperties().getProperty('TOKEN_SECRET') || '';
     if (!secret) return null;
-    if (sha256_(principal + '.' + ts + '.' + secret).slice(0, 24) !== sig) return null;
+    if (sha256_(subject + '.' + ts + '.' + secret).slice(0, 24) !== sig) return null;
     if (Date.now() - Number(ts) > TOKEN_MAX_AGE_MS) return null;
-    return principal;
+    var i = subject.indexOf(':');
+    if (i < 0) return null; // 旧无 role 格式 → 强制重登（部署后一次性影响所有在线 token）
+    return { role: subject.slice(0, i), principal: subject.slice(i + 1) };
   } catch (e) { return null; }
 }
+// 辅助：日志/审计需要 principal 字符串
+function tokenPrincipal_(token) { var t = verifyToken_(token); return t ? t.principal : ''; }
 
 function requireVendor_(body, vendorId) {
-  var p = verifyToken_(body.token);
-  if (!p) return '请重新登录（令牌无效或过期）';
-  if (p === 'admin') return null;
-  if (vendorId && p !== String(vendorId)) return '无权操作其它商家的数据';
+  var t = verifyToken_(body.token);
+  if (!t) return '请重新登录（令牌无效或过期）';
+  if (t.role === 'admin') return null; // admin 可代任意商家操作
+  if (t.role !== 'vendor') return '需要商家身份';
+  if (vendorId && t.principal !== String(vendorId)) return '无权操作其它商家的数据';
   return null;
 }
 
 function requireAdmin_(body) {
-  return verifyToken_(body.token) === 'admin' ? null : '需要管理员权限';
+  var t = verifyToken_(body.token);
+  return (t && t.role === 'admin') ? null : '需要管理员权限';
 }
 
 // ==================== Drive 图片 ====================
@@ -548,12 +578,15 @@ function doPost(e) {
       case 'wipeAllData':       result = wipeAllDataAction_(body); break;
       default:                  result = { ok: false, error: '未知操作: ' + sanitize_(String(body.action), 50) };
     }
-    // 将所有缓存中的脏数据批量写回 Sheet（一次请求只 flush 一次）
-    cacheFlush_();
+    // C17 fix: cacheFlush_ 已挪进 withLock_ 内（防两请求 flush 交错）。
+    //   纯读 action（listVendors/listPayments 等）不产生脏数据 → 不需 flush
+    //   写 action 全部走 withLock_ → 锁内 flush 保证 mutation+flush 原子
+    //   兜底：保留这里的 flush，处理"漏网"边界（万一新 action 没走 withLock_）
+    try { cacheFlush_(); } catch (e) {}
     try { trackUsage_(_action, Date.now() - _t0); } catch (e) {} // 用量监控：失败不影响业务
     return json_(result);
   } catch (err) {
-    cacheFlush_(); // 即使出错也尝试 flush
+    try { cacheFlush_(); } catch (e) {}
     try { trackUsage_(_action + ':error', Date.now() - _t0); } catch (e) {}
     return json_({ ok: false, error: String(err).slice(0, 200) });
   }
@@ -623,7 +656,14 @@ function parseItems_(r) {
 function withLock_(fn) {
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
-  try { return fn(); } finally { lock.releaseLock(); }
+  // C1 fix: verify lock acquisition — without this, all mutating operations can race
+  if (!lock.hasLock()) return { ok: false, error: 'System busy, please retry' };
+  try {
+    var r = fn();
+    // C17 fix: flush in 锁内 — 之前 doPost 在锁外 finally flush，两请求 flush 可交错损坏数据
+    try { cacheFlush_(); } catch (e) { /* flush 失败下次写时仍会重试，不丢数据 */ }
+    return r;
+  } finally { lock.releaseLock(); }
 }
 
 // ==================== 业务逻辑 ====================
@@ -670,45 +710,53 @@ function vendorLogin_(body) {
 
   // 按 username 单行查找，避免把整张 Vendors 表读进请求缓存（登录提速关键）
   var found = readVendorByUsername_(username);
-  if (!found) { recordLoginFail_(rate); logAction_(username, 'LOGIN_FAIL', '账号不存在'); return { ok: false, error: '账号不存在' }; }
+  // H22 fix: return generic error to prevent username enumeration
+  if (!found) { recordLoginFail_(rate); logAction_(username, 'LOGIN_FAIL', 'invalid_credentials'); return { ok: false, error: '账号或密码错误' }; }
   var v = found.row;
-  if (v.active === false || String(v.active).toUpperCase() === 'FALSE') { logAction_(username, 'LOGIN_FAIL', '账号已停用'); return { ok: false, error: '账号已停用' }; }
+  if (v.active === false || String(v.active).toUpperCase() === 'FALSE') { logAction_(username, 'LOGIN_FAIL', 'account_disabled'); return { ok: false, error: '账号或密码错误' }; }
 
-  // 密码验证：SHA-256 hash 优先，否则明文比较（兼容旧数据）
+  // 密码验证：C3 verifyPwd_ 同时认 新salt:hash 和 旧无盐sha256；明文兜底兼容老数据
   var ok = false;
   if (v.passwordHash) {
-    ok = (hashPwd_(password) === String(v.passwordHash).toLowerCase());
+    ok = verifyPwd_(password, v.passwordHash);
   } else {
     ok = (String(v.password) === password);
   }
 
-  if (!ok) { recordLoginFail_(rate); logAction_(username, 'LOGIN_FAIL', '密码错误'); return { ok: false, error: '密码错误' }; }
+  // H22 fix: generic error to prevent password enumeration from different error messages
+  if (!ok) { recordLoginFail_(rate); logAction_(username, 'LOGIN_FAIL', 'wrong_password'); return { ok: false, error: '账号或密码错误' }; }
 
-  // 自动升级明文密码到 SHA-256（直接按行号写单元格，不触发全表缓存读）
-  if (!v.passwordHash) {
+  // 自动升级：明文 → 新salt:hash；或旧无盐 hash → 新salt:hash（彩虹表免疫）
+  if (!v.passwordHash || isLegacyPwdHash_(v.passwordHash)) {
     writeVendorCell_(found.rowIndex, found.headers, 'passwordHash', hashPwd_(password));
-    writeVendorCell_(found.rowIndex, found.headers, 'password', '');
+    if (!v.passwordHash) writeVendorCell_(found.rowIndex, found.headers, 'password', '');
   }
 
   recordLoginSuccess_(rate);
   logAction_(username, 'LOGIN_SUCCESS', 'vendorId=' + v.vendorId);
-  return { ok: true, token: makeToken_(String(v.vendorId)), vendor: vendorPublic_(v), pollIntervalMs: 15000 };
+  return { ok: true, token: makeToken_(String(v.vendorId), 'vendor'), vendor: vendorPublic_(v), pollIntervalMs: 15000 };
 }
 
 function adminLogin_(body) {
   var props = PropertiesService.getScriptProperties();
-  var u = props.getProperty('ADMIN_USER') || 'admin';
-  var p = props.getProperty('ADMIN_PASS') || 'admin123';
+  var u = props.getProperty('ADMIN_USER');
+  var pHash = props.getProperty('ADMIN_PASS_HASH');
+  // C8/C16 fix: admin credentials must be configured; no default fallback
+  if (!u || !pHash) return { ok: false, error: '管理员账号未配置，请联系平台初始化' };
   var username = sanitize_(body.username, 30).trim();
 
   // 防暴力破解：admin 也保护
   var rate = checkLoginRateLimit_('admin:' + username);
   if (!rate.ok) { logAction_(username, 'ADMIN_LOGIN_BLOCKED', '次数超限'); return { ok: false, error: rate.error }; }
 
-  if (username === u && String(body.password || '') === p) {
+  if (username === u && verifyPwd_(String(body.password || ''), pHash)) {
     recordLoginSuccess_(rate);
     logAction_(u, 'ADMIN_LOGIN_SUCCESS', '');
-    return { ok: true, token: makeToken_('admin') };
+    // 自动升级 admin 密码 hash 旧无盐 → 新salt:hash（PropertiesService 直接覆盖）
+    if (isLegacyPwdHash_(pHash)) {
+      try { props.setProperty('ADMIN_PASS_HASH', hashPwd_(String(body.password || ''))); } catch (e) {}
+    }
+    return { ok: true, token: makeToken_('admin', 'admin') };
   }
   recordLoginFail_(rate);
   logAction_(username, 'ADMIN_LOGIN_FAIL', '');
@@ -815,7 +863,7 @@ function saveVendorConfig_(body) {
   if (body.payQRs) cacheUpdateCell_(TAB_VENDORS, 'vendorId', vid, 'payQRsJson', JSON.stringify(body.payQRs));
   if (body.categories) cacheUpdateCell_(TAB_VENDORS, 'vendorId', vid, 'categoriesJson', JSON.stringify(body.categories));
   if (typeof body.open === 'boolean') cacheUpdateCell_(TAB_VENDORS, 'vendorId', vid, 'active', body.open);
-  logAction_(verifyToken_(body.token) || 'merchant', 'VENDOR_CONFIG', 'vendorId=' + vid);
+  logAction_(tokenPrincipal_(body.token) || 'merchant', 'VENDOR_CONFIG', 'vendorId=' + vid);
   return { ok: true };
 }
 
@@ -824,6 +872,13 @@ function saveProduct_(body) {
   var p = body.product || {};
   var err = requireVendor_(body, p.vendorId);
   if (err) return { ok: false, error: err };
+  // H21 fix: prevent cross-vendor overwrite via guessed itemId
+  if (p.itemId) {
+    var existing = cacheFind_(TAB_MENU, 'itemId', String(p.itemId));
+    if (existing && String(existing.vendorId) !== String(p.vendorId)) {
+      return { ok: false, error: '无权修改其他商家的商品' };
+    }
+  }
   if (!p.itemId) p.itemId = 'it_' + Utilities.getUuid().slice(0, 8);
   // 清洗
   if (p.name) p.name = sanitize_(p.name, 60);
@@ -831,7 +886,7 @@ function saveProduct_(body) {
   if (p.category) p.category = sanitize_(p.category, 30);
   if (p.image) p.image = saveImageToDrive_(p.image, p.itemId);
   cacheUpsert_(TAB_MENU, 'itemId', p);
-  logAction_(verifyToken_(body.token) || 'merchant', 'PRODUCT_SAVE', 'itemId=' + p.itemId + ' ' + (p.name || ''));
+  logAction_(tokenPrincipal_(body.token) || 'merchant', 'PRODUCT_SAVE', 'itemId=' + p.itemId + ' ' + (p.name || ''));
   return { ok: true, itemId: p.itemId };
 }
 
@@ -842,7 +897,7 @@ function removeProduct_(body) {
   var err = requireVendor_(body, it.vendorId);
   if (err) return { ok: false, error: err };
   cacheDelete_(TAB_MENU, 'itemId', itemId);
-  logAction_(verifyToken_(body.token) || 'merchant', 'PRODUCT_REMOVE', 'itemId=' + itemId);
+  logAction_(tokenPrincipal_(body.token) || 'merchant', 'PRODUCT_REMOVE', 'itemId=' + itemId);
   return { ok: true };
 }
 
@@ -970,15 +1025,46 @@ function placeOrder_(body) {
       }
     }
   }
-  // 重算合计：小计 + 打包 + 配送 - 会员抵扣
+  // 重算合计：小计 + 打包 + 配送 - 会员抵扣（C11 fix: use server-enforced fees）
   var srvSubtotal = items.reduce(function (s, it) { return s + (Number(it.price) || 0) * (Number(it.qty) || 0); }, 0);
-  o.total = Math.round((srvSubtotal + (Number(o.packagingFee) || 0) + (Number(o.deliveryFee) || 0) - membershipDiscount) * 100) / 100;
+  o.packagingFee = srvPkg;
+  o.deliveryFee = srvDel;
+  o.total = Math.round((srvSubtotal + srvPkg + srvDel - membershipDiscount) * 100) / 100;
 
+  // C10+C11 fix: cross-reference prices + fees + stock against server-side config
+  // C11: enforce packaging/delivery fees from vendor settings
+  if (settings.fees) {
+    var srvPkg = (settings.fees.packaging && settings.fees.packaging.enabled) ? (Number(settings.fees.packaging.amount) || 0) : 0;
+    var srvDel = (settings.fees.delivery && settings.fees.delivery.enabled) ? (Number(settings.fees.delivery.amount) || 0) : 0;
+    if (Math.abs((Number(o.packagingFee) || 0) - srvPkg) > 0.01 || Math.abs((Number(o.deliveryFee) || 0) - srvDel) > 0.01) {
+      return { ok: false, error: '费用与商家设置不符' };
+    }
+  }
   for (var i = 0; i < items.length; i++) {
     var it = items[i];
     var m = menu.find(function (x) { return String(x.itemId) === String(it.id); });
-    if (m && m.stock !== null && m.stock !== '' && !isNaN(Number(m.stock))) {
+    if (!m) return { ok: false, error: '商品不存在：' + sanitize_(it.name || it.id, 30) };
+    // Stock validation
+    if (m.stock !== null && m.stock !== '' && !isNaN(Number(m.stock))) {
       if (Number(m.stock) < Number(it.qty)) return { ok: false, error: '库存不足：' + sanitize_(it.name || it.id, 30) };
+    }
+    // Compute server-side price: base price + selected option surcharges
+    var serverPrice = Number(m.price) || 0;
+    if (m.optionsJson) {
+      try {
+        var optionGroups = JSON.parse(String(m.optionsJson));
+        var opts = safeParse_(it.options) || [];
+        if (Array.isArray(optionGroups)) {
+          optionGroups.forEach(function (g) {
+            if (g.options) g.options.forEach(function (o) { if (opts.indexOf(o.name) >= 0) serverPrice += Number(o.price) || 0; });
+          });
+        }
+      } catch (_) {}
+    }
+    var clientPrice = Number(it.price) || 0;
+    // Allow small rounding differences (within 0.01)
+    if (Math.abs(clientPrice - serverPrice) > 0.02) {
+      return { ok: false, error: '价格异常：' + sanitize_(it.name || it.id, 30) + '（期望 RM ' + serverPrice.toFixed(2) + '）' };
     }
   }
 
@@ -1027,6 +1113,11 @@ function attachScreenshot_(body) {
   if (!body.screenshot) return { ok: false, error: '缺少截图' };
   var o = cacheFind_(TAB_ORDERS, 'orderId', orderId);
   if (!o) return { ok: false, error: '订单不存在' };
+  // H23 fix: only allow screenshot for pending orders and verify phone ownership
+  if (String(o.status) !== 'pending') return { ok: false, error: '订单状态不允许上传截图' };
+  if (body.phone && String(body.phone || '').replace(/\D/g, '') !== String(o.phone || '').replace(/\D/g, '')) {
+    return { ok: false, error: '无权操作此订单' };
+  }
   var url = saveImageToDrive_(body.screenshot, orderId + '-pay');
   cacheUpdateCell_(TAB_ORDERS, 'orderId', orderId, 'screenshotUrl', url);
   logAction_('customer', 'ORDER_SHOT', 'orderId=' + orderId);
@@ -1085,6 +1176,18 @@ function updateOrderStatus_(body) {
   var err = requireVendor_(body, o.vendorId);
   if (err) return { ok: false, error: err };
 
+  // C2 fix: validate status transitions — prevent arbitrary/illegal state changes
+  var currentStatus = String(o.status || 'pending');
+  var ALLOWED_TRANSITIONS = {
+    pending: ['cooking', 'rejected', 'cancelled'],
+    cooking: ['delivering'],
+    delivering: ['delivered']
+  };
+  var allowed = ALLOWED_TRANSITIONS[currentStatus];
+  if (!allowed || allowed.indexOf(status) < 0) {
+    return { ok: false, error: '不允许从 ' + currentStatus + ' 切换到 ' + status };
+  }
+
   // 批量更新：一次修改缓存中的多个字段，flush 时一次性写回 Sheet
   cacheUpdateCell_(TAB_ORDERS, 'orderId', orderId, 'status', status);
   if (body.rejectReason) {
@@ -1098,7 +1201,7 @@ function updateOrderStatus_(body) {
   // 拒绝时退回会员积分
   if (status === 'rejected') returnMembershipPoints_(o);
 
-  logAction_(verifyToken_(body.token) || 'merchant', 'ORDER_' + status.toUpperCase(), 'orderId=' + orderId);
+  logAction_(tokenPrincipal_(body.token) || 'merchant', 'ORDER_' + status.toUpperCase(), 'orderId=' + orderId);
   // 状态变更 → 推送给客户（cooking/delivering/delivered/rejected 都有对应模板）
   o.status = status;
   if (body.rejectReason) o.rejectReason = sanitize_(String(body.rejectReason), 200);
@@ -1124,7 +1227,7 @@ function updateProduct_(body) {
   else if (field === 'category') val = sanitize_(String(val || ''), 30);
 
   cacheUpdateCell_(TAB_MENU, 'itemId', itemId, field, val);
-  logAction_(verifyToken_(body.token) || 'merchant', 'PRODUCT_UPDATE', 'itemId=' + itemId + ' ' + field + '=' + String(val).slice(0, 50));
+  logAction_(tokenPrincipal_(body.token) || 'merchant', 'PRODUCT_UPDATE', 'itemId=' + itemId + ' ' + field + '=' + String(val).slice(0, 50));
   return { ok: true };
 }
 
@@ -1135,6 +1238,12 @@ function upsertVendor_(body) {
 
   var vendorId = sanitize_(String(v.vendorId), 30);
   var username = sanitize_(String(v.username), 30);
+  // C15 fix: 保留名防御。即使 token role 校验失效，也别让"admin" 当作 vendorId 写进表
+  // —— vendorLogin 拿到 vendorId='admin' 的 token 仍然只能是 role='vendor'，攻不到 requireAdmin_
+  var RESERVED = { admin: 1, root: 1, system: 1, 'super': 1 };
+  if (RESERVED[vendorId.toLowerCase()] || RESERVED[username.toLowerCase()]) {
+    return { ok: false, error: '保留名，不可作为商家账号' };
+  }
   // cacheUpsert_ 会把未给的列填 ''；故先取现有行，保留 plan/planUntil/isTest 不被清空
   var existing = cacheFind_(TAB_VENDORS, 'vendorId', vendorId) || {};
 
@@ -1168,6 +1277,7 @@ function removeVendor_(body) {
   cacheDelete_(TAB_VENDORS, 'vendorId', vendorId);
   cacheDelete_(TAB_ORDERS, 'vendorId', vendorId);
   cacheDelete_(TAB_MENU, 'vendorId', vendorId);
+  cacheDelete_(TAB_PAYMENTS, 'vendorId', vendorId); // C9 fix: cascade to payments
   logAction_('admin', 'VENDOR_REMOVE', 'vendorId=' + vendorId);
   return { ok: true };
 }
@@ -1185,16 +1295,16 @@ function saveHub_(body) {
 
 // 商家把楼栋加入本社区共享池（重复的自动去重；别家也能勾选到）
 function addHubBuilding_(body) {
-  var principal = verifyToken_(body.token);
-  if (!principal) return { ok: false, error: '未授权' };
+  var t = verifyToken_(body.token);
+  if (!t) return { ok: false, error: '未授权' };
   var name = sanitize_(String(body.name || ''), 40).trim();
   if (!name) return { ok: false, error: '缺少楼栋名' };
   // hubId 由身份推导，不信客户端传值：商家只能往自己所属社区的池里加楼栋（admin 可指定任意社区）
   var hubId;
-  if (principal === 'admin') {
+  if (t.role === 'admin') {
     hubId = sanitize_(String(body.hubId || ''), 30).toLowerCase();
   } else {
-    var v = cacheFind_(TAB_VENDORS, 'vendorId', principal);
+    var v = cacheFind_(TAB_VENDORS, 'vendorId', t.principal);
     if (!v) return { ok: false, error: '商家不存在' };
     hubId = sanitize_(String(v.HubID || ''), 30).toLowerCase();
   }
