@@ -13,6 +13,12 @@ package-lock.json
 #     便于静态托管(Netlify/Pages)自动部署。真正的密钥都在后端 GAS，不在前端。
 backend/.clasp.json
 
+# 测试库副本：含 admin 密码 hash 自举代码 + 测试库 scriptId，不入仓库
+backend-test/
+
+# 含密码明文的本地验证脚本（仅本人本地用）
+verify-katherine-admin.js
+
 # Build / deploy artifacts
 dist/
 

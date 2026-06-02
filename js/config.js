@@ -10,7 +10,7 @@
  */
 (function () {
   var PROD_API = 'https://script.google.com/macros/s/AKfycbzJpkPp4QLWA95EhbSbN3AyXYKs4DDUJjq1uDO-VKUz5LoL38RH_iv21pTGL0AS3aKiOw/exec';
-  var TEST_API = ''; // ← 填入「测试库」Apps Script 部署的 /exec 网址（建好测试后端后）
+  var TEST_API = 'https://script.google.com/macros/s/AKfycbwcpGelUCoaBf0fK01ZHEfzZCMeyfaYD6Gmu7er1iARzIDU_oTxqERWGAvXeWJtlyKkIA/exec';
 
   var qs = location.search || '';
   var env = /[?&]demo\b/.test(qs) ? 'demo' : (/[?&]test\b/.test(qs) ? 'test' : 'prod');

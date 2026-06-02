@@ -279,8 +279,8 @@
                 </label>
               </div>
               <div v-if="!isNew" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-                <button type="button" class="btn btn--sm btn--ghost" @click="form.password = '1234'; showPw = true">🔑 重置为 1234</button>
-                <button type="button" class="btn btn--sm btn--ghost" @click="form.password = randomPwd(); showPw = true">🎲 随机生成</button>
+                <!-- C13 fix: replaced hardcoded weak password with random generator -->
+                <button type="button" class="btn btn--sm btn--ghost" @click="form.password = randomPwd(); showPw = true">🔑 随机重置密码</button>
                 <button type="button" class="btn btn--sm btn--ghost" @click="copyPwd" :disabled="!form.password">📋 复制</button>
               </div>
               <p class="muted sm" v-if="!isNew">账号不可改；留空密码则保持原密码不变。</p>
@@ -314,7 +314,8 @@
         ); else window.prompt('复制密码：', form.password);
       }
       function acc(m) { return store.accountOf(m.id); }
-      function openNew() { isNew.value = true; error.value = ''; editing.value = 'new'; Object.assign(form, { name: '', desc: '', logo: '🏪', tngLabel: '', hubId: (store.state.hubs[0] && store.state.hubs[0].id) || '', username: '', password: '1234', isTest: false }); }
+      // C13 fix: generate random password instead of hardcoded '1234'
+      function openNew() { isNew.value = true; error.value = ''; editing.value = 'new'; Object.assign(form, { name: '', desc: '', logo: '🏪', tngLabel: '', hubId: (store.state.hubs[0] && store.state.hubs[0].id) || '', username: '', password: randomPwd(), isTest: false }); }
       function openEdit(m) {
         isNew.value = false; error.value = ''; editing.value = m;
         const a = acc(m);
