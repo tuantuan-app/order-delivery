@@ -144,6 +144,28 @@
           </div>
         </div>
 
+        <!-- Sheet 配额保护：归档老订单 -->
+        <div class="card" style="background:#f0fdf4;border:1px solid #bbf7d0">
+          <div class="card__label">📦 归档老订单 <span class="muted sm">释放 Sheet 10M cell 配额</span></div>
+          <p class="sm" style="margin:6px 0;line-height:1.6">
+            把 <b>{{ archiveDays }} 天前</b>的<b>终态订单</b>（已送达/已拒/取消）从 Orders 搬到 OrdersArchive 表。
+            热表保持小、查询快；归档表照样可查（admin/商家自动鉴权）。
+            <br>💡 推荐 Apps Script 触发器设<b>每周</b>跑 <code>archiveOldOrdersWeekly</code>。
+          </p>
+          <div class="field-row">
+            <label class="field"><span>天数</span><input type="number" v-model.number="archiveDays" min="30" max="730" /></label>
+            <button class="btn btn--primary" style="align-self:end;flex:1" @click="doArchive" :disabled="ab">{{ ab ? '归档中…' : '立即归档 ' + archiveDays + ' 天前的终态订单' }}</button>
+          </div>
+          <div class="test-out" v-if="archiveResult">
+            <div class="test-line"><span>扫描订单</span><b>{{ archiveResult.scanned }} 单</b></div>
+            <div class="test-line"><span>已归档</span><b>{{ archiveResult.archived }} 单</b></div>
+            <div class="test-line" v-if="archiveResult.archiveRows != null"><span>归档表当前</span><b>{{ archiveResult.archiveRows }} 单 · {{ Math.round((archiveResult.archiveCells || 0) / 100000) / 10 }}M cell</b></div>
+            <div class="test-line" v-if="archiveResult.warning"><span style="color:#b91c1c">⚠ 警告</span><b class="bad">{{ archiveResult.warning }}</b></div>
+            <div class="test-line" v-if="archiveResult.message"><span>信息</span><b>{{ archiveResult.message }}</b></div>
+            <div class="test-line" v-if="archiveResult.error"><span style="color:#b91c1c">错误</span><b class="bad">{{ archiveResult.error }}</b></div>
+          </div>
+        </div>
+
         <!-- 重置种子数据 -->
         <div class="card test-danger">
           <div class="card__label">🔄 重置全部数据（重新播种）</div>
@@ -171,6 +193,18 @@
       const tsb = ref(false); const lastShop = ref(null);
       // Drive 配额：清理 N 天前图片
       const pb = ref(false); const purgeDays = ref(30); const purgeResult = ref(null);
+      // Sheet 配额：归档 N 天前订单
+      const ab = ref(false); const archiveDays = ref(90); const archiveResult = ref(null);
+      async function doArchive() {
+        if (!window.confirm('把 ' + archiveDays.value + ' 天前的终态订单从 Orders 搬到 OrdersArchive？\n\n热表立即变小，归档表照样可查（admin/商家鉴权）。\n建议每周做一次。')) return;
+        ab.value = true;
+        try {
+          var r = await store.archiveOldOrders(archiveDays.value);
+          archiveResult.value = r;
+          if (r && r.ok) store.toastSuccess('✅ 归档完成：' + (r.archived || 0) + ' 单搬到 OrdersArchive');
+          else store.toastError('归档失败：' + (r && r.error || '未知'));
+        } finally { ab.value = false; }
+      }
       async function doPurge() {
         if (!window.confirm('删除 ' + purgeDays.value + ' 天前订单的支付截图与送达照？\n\n订单文字记录（金额/时间/状态等）完全保留，对账不受影响。\n仅释放 Drive 配额。')) return;
         pb.value = true;
@@ -242,7 +276,7 @@
         finally { rb.value = false; }
       }
       onMounted(refreshCnt);
-      return { online, n, hb, cb, rb, health, cnt, ub, usage, cck, check, tsb, lastShop, mkTestShop, pb, purgeDays, purgeResult, doPurge, loadUsage, runHealth, runCheck, makeOrders, flow, simAll, clear, resetSeed };
+      return { online, n, hb, cb, rb, health, cnt, ub, usage, cck, check, tsb, lastShop, mkTestShop, pb, purgeDays, purgeResult, doPurge, ab, archiveDays, archiveResult, doArchive, loadUsage, runHealth, runCheck, makeOrders, flow, simAll, clear, resetSeed };
     },
   };
 })();

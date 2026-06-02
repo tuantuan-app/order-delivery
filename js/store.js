@@ -1463,6 +1463,18 @@
       try { return await window.api.purgeOldImages(days || 30, auth.token); }
       catch (e) { return { ok: false, error: String(e) }; }
     },
+    // 归档 N 天前的终态订单（释放 Sheet cell 配额）；仅 admin 调用
+    async archiveOldOrders(days) {
+      if (!(window.api && window.api.enabled())) return { ok: false, error: '需要后端' };
+      try { return await window.api.archiveOldOrders(days || 90, auth.token); }
+      catch (e) { return { ok: false, error: String(e) }; }
+    },
+    // 查询归档（admin 任意 / 商家自己 / 按 phone 查客户）
+    async getArchivedOrders(filter, limit, offset) {
+      if (!(window.api && window.api.enabled())) return { ok: false, error: '需要后端' };
+      try { return await window.api.getArchivedOrders(filter || {}, auth.token, limit || 100, offset || 0); }
+      catch (e) { return { ok: false, error: String(e) }; }
+    },
     isOpen(m) {
       if (!m) return false;
       var h = m.settings && m.settings.hours;

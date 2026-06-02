@@ -15,6 +15,7 @@
 const SHEET_ID = '';
 const TAB_VENDORS = 'Vendors';
 const TAB_ORDERS = 'Orders';
+const TAB_ORDERS_ARCHIVE = 'OrdersArchive'; // 90+ 天前终态订单归档，热表保持小
 const TAB_MENU = 'Menu';
 const TAB_HUBS = 'Hubs';
 const TAB_LOGS = 'SystemLogs';
@@ -25,6 +26,8 @@ const SCHEMA = {
   Vendors: ['vendorId', 'username', 'password', 'passwordHash', 'shopName', 'logo', 'tngLabel', 'HubID', 'active', 'settingsJson', 'payQRsJson', 'categoriesJson', 'plan', 'planUntil', 'isTest'],
   Payments: ['payId', 'vendorId', 'amount', 'plan', 'paidAt', 'periodStart', 'periodEnd', 'note', 'isTest'],
   Orders: ['orderId', 'vendorId', 'HubID', 'createdAt', 'customerName', 'phone', 'building', 'room', 'items', 'subtotal', 'packagingFee', 'deliveryFee', 'total', 'deliveryTime', 'screenshotUrl', 'status', 'rejectReason', 'deliveryPhotoUrl', 'remark', 'membershipJson', 'isTest', 'imagesPurgedAt'],
+  // 归档表：跟 Orders 同 schema + archivedAt 时间戳；90 天前终态订单搬这里
+  OrdersArchive: ['orderId', 'vendorId', 'HubID', 'createdAt', 'customerName', 'phone', 'building', 'room', 'items', 'subtotal', 'packagingFee', 'deliveryFee', 'total', 'deliveryTime', 'screenshotUrl', 'status', 'rejectReason', 'deliveryPhotoUrl', 'remark', 'membershipJson', 'isTest', 'imagesPurgedAt', 'archivedAt'],
   Menu: ['itemId', 'vendorId', 'HubID', 'name', 'price', 'available', 'image', 'emoji', 'desc', 'category', 'stock', 'optionsJson', 'discountJson', 'isTest'],
   Hubs: ['hubId', 'name', 'buildingsJson'],
   SystemLogs: ['timestamp', 'actor', 'action', 'details'],
@@ -194,7 +197,7 @@ function ensureSchema_() {
   if (_schemaReady) return;
   const props = PropertiesService.getScriptProperties();
   // 版本号每加一张表都 +1，强制走一次 sheet_/migrateHeaders_ 创建新表 / 补列
-  if (props.getProperty('SCHEMA_READY8') === '1') { _schemaReady = true; return; }
+  if (props.getProperty('SCHEMA_READY9') === '1') { _schemaReady = true; return; }
   Object.keys(SCHEMA).forEach(function (n) { sheet_(n); migrateHeaders_(n); });
   if (props.getProperty('SEEDED5') !== '1') {
     var cfg = defaultConfig_();
@@ -264,7 +267,7 @@ function ensureSchema_() {
     ].forEach(function (m) { upsertRow_(TAB_MENU, 'itemId', m); });
     props.setProperty('SEEDED5', '1');
   }
-  props.setProperty('SCHEMA_READY8', '1'); _schemaReady = true;
+  props.setProperty('SCHEMA_READY9', '1'); _schemaReady = true;
 
   // ==== 一次性 migration：给老 seed 数据补打 isTest='TEST' 标 ====
   // 老版本部署时 seed 没标 TEST，导致 admin「清除测试数据」清不掉
@@ -391,6 +394,115 @@ function purgeOldImagesDaily() { return purgeOldImages_(30); }
 // doPost 调用版（admin 鉴权）
 function purgeOldImagesAction_(body) {
   return purgeOldImages_(body && body.days);
+}
+
+// ==================== 老订单归档（Sheet 10M cell 保护） ====================
+// 90 天前 + 终态（delivered/rejected/cancelled）的订单：从 Orders 搬到 OrdersArchive
+// 热表保持 ~90 天 × 20 商家 × 30 单 = 54k 行 ≈ 1.2M cell << 10M 上限，永不撞墙
+// 归档表照样在同 workbook，可查（getArchivedOrders）；超过 8M cell 时返回警告让 admin 处理
+//
+// 触发方式（任选其一）：
+//   1) admin UI: 测试 tab 加按钮，doPost action='archiveOldOrders'
+//   2) 时间触发器（推荐）：Apps Script 编辑器 → 触发器 → archiveOldOrdersDaily → 每周
+//   3) Worker Cron：每周日调一次
+function archiveOldOrders_(daysOld) {
+  ensureSchema_();
+  daysOld = Number(daysOld) || 90;
+  var cutoff = Date.now() - daysOld * 86400000;
+  var terminal = { delivered: 1, rejected: 1, cancelled: 1 };
+  var sh = sheet_(TAB_ORDERS);
+  var ash = sheet_(TAB_ORDERS_ARCHIVE);
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return { ok: true, scanned: 0, archived: 0, message: 'empty table' };
+  var headers = values[0].map(String);
+  var aHeaders = ash.getRange(1, 1, 1, Math.max(1, ash.getLastColumn())).getValues()[0].map(String);
+  // 用列名映射，不假设两表列顺序一致
+  var createdAtCol = headers.indexOf('createdAt');
+  var statusCol = headers.indexOf('status');
+  if (createdAtCol < 0 || statusCol < 0) return { ok: false, error: 'missing createdAt/status' };
+  var archivedAtCol = aHeaders.indexOf('archivedAt');
+  if (archivedAtCol < 0) return { ok: false, error: 'OrdersArchive 缺 archivedAt 列（re-run ensureSchema_）' };
+
+  var nowIso = new Date().toISOString();
+  var toArchive = [];   // 累积要写入归档的行（对齐 aHeaders 列顺序）
+  var rowsToDelete = []; // 要从主表删除的行号（1-based，逆序删保索引）
+
+  for (var r = 1; r < values.length; r++) {
+    var row = values[r];
+    var st = String(row[statusCol] || '').toLowerCase();
+    if (!terminal[st]) continue;
+    var createdAt = row[createdAtCol];
+    var ts = createdAt instanceof Date ? createdAt.getTime() : Date.parse(String(createdAt));
+    if (!ts || ts > cutoff) continue;
+    // 构造归档行：按 aHeaders 顺序取值；archivedAt 用 nowIso
+    var archRow = aHeaders.map(function (h, i) {
+      if (h === 'archivedAt') return nowIso;
+      var srcIdx = headers.indexOf(h);
+      return srcIdx >= 0 ? row[srcIdx] : '';
+    });
+    toArchive.push(archRow);
+    rowsToDelete.push(r + 1); // sheet 1-based
+  }
+
+  if (!toArchive.length) {
+    return { ok: true, scanned: values.length - 1, archived: 0, message: '无可归档（无 ' + daysOld + ' 天前的终态订单）' };
+  }
+
+  // 批量 append 到归档表（一次 setValues 远快于逐行）
+  var startRow = ash.getLastRow() + 1;
+  ash.getRange(startRow, 1, toArchive.length, aHeaders.length).setValues(toArchive);
+
+  // 从主表删除（逆序，避免行号错位）
+  rowsToDelete.sort(function (a, b) { return b - a; });
+  rowsToDelete.forEach(function (rn) { sh.deleteRow(rn); });
+
+  cacheReset_();
+
+  // 归档表容量检查：超 8M cell 提醒 admin 该手动 export 清理
+  var aRows = ash.getLastRow() - 1;
+  var aCells = aRows * aHeaders.length;
+  var warning = '';
+  if (aCells > 8000000) warning = '⚠ OrdersArchive 已用 ' + Math.round(aCells / 100000) / 10 + 'M cell（80% of 10M）。建议导出 CSV 后清空归档表';
+
+  logAction_('system', 'ORDERS_ARCHIVED', 'days=' + daysOld + ' archived=' + toArchive.length + ' archiveRows=' + aRows);
+  return { ok: true, scanned: values.length - 1, archived: toArchive.length, archiveRows: aRows, archiveCells: aCells, daysOld: daysOld, warning: warning };
+}
+
+// Apps Script 时间触发器入口（推荐每周日跑一次，归档不需要每天）
+function archiveOldOrdersWeekly() { return archiveOldOrders_(90); }
+
+// doPost 调用版（admin 鉴权）
+function archiveOldOrdersAction_(body) {
+  return archiveOldOrders_(body && body.days);
+}
+
+// 查询归档（admin / 商家本人 / 客户本人按需查；不进缓存避免吃 GAS 配额）
+function getArchivedOrders_(body) {
+  var t = verifyToken_(body && body.token);
+  ensureSchema_();
+  var sh = sheet_(TAB_ORDERS_ARCHIVE);
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return { ok: true, orders: [], total: 0 };
+  var headers = values[0].map(String);
+  var rows = values.slice(1).map(function (row) {
+    var o = {}; headers.forEach(function (h, i) { o[h] = row[i]; }); return o;
+  });
+
+  // 权限过滤
+  var filter = body && body.filter || {};
+  if (t && t.role === 'vendor') filter.vendorId = t.principal; // 商家只能看自己的
+  if (filter.vendorId) rows = rows.filter(function (r) { return r.vendorId === filter.vendorId; });
+  if (filter.phone) rows = rows.filter(function (r) { return String(r.phone || '').replace(/\D/g, '') === String(filter.phone).replace(/\D/g, ''); });
+  if (filter.fromDate) rows = rows.filter(function (r) { return Date.parse(r.createdAt) >= Date.parse(filter.fromDate); });
+  if (filter.toDate)   rows = rows.filter(function (r) { return Date.parse(r.createdAt) <= Date.parse(filter.toDate); });
+
+  // 默认按时间倒序，分页
+  rows.sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
+  var limit = Math.min(Math.max(1, Number(body && body.limit) || 100), 500);
+  var offset = Math.max(0, Number(body && body.offset) || 0);
+  var paged = rows.slice(offset, offset + limit).map(parseItems_);
+
+  return { ok: true, orders: paged, total: rows.length, limit: limit, offset: offset };
 }
 
 // ==================== 原始读写工具（仅 schema 初始化用，不参与请求缓存） ====================
@@ -634,7 +746,7 @@ function doPost(e) {
       // 内部测试工具（仅管理员）
       case 'clearTestData':     result = adminGuard_(body, function () { return withLock_(function () { return clearTestData_(body); }); }); break;
       case 'resetSeedData':    result = adminGuard_(body, function () { return withLock_(function () { return resetSeedData_(body); }); }); break;
-      case 'health':            result = adminGuard_(body, function () { return { ok: true, service: 'community-delivery', schema: 'SCHEMA_READY8', time: new Date().toISOString(), counts: { vendors: cacheRead_(TAB_VENDORS).rows.length, orders: cacheRead_(TAB_ORDERS).rows.length, payments: cacheRead_(TAB_PAYMENTS).rows.length, testOrders: cacheFilter_(TAB_ORDERS, 'isTest', 'TEST').length, subscriptions: cacheRead_(TAB_SUBSCRIPTIONS).rows.length } }; }); break;
+      case 'health':            result = adminGuard_(body, function () { return { ok: true, service: 'community-delivery', schema: 'SCHEMA_READY9', time: new Date().toISOString(), counts: { vendors: cacheRead_(TAB_VENDORS).rows.length, orders: cacheRead_(TAB_ORDERS).rows.length, payments: cacheRead_(TAB_PAYMENTS).rows.length, testOrders: cacheFilter_(TAB_ORDERS, 'isTest', 'TEST').length, subscriptions: cacheRead_(TAB_SUBSCRIPTIONS).rows.length } }; }); break;
       case 'getSystemUsage':    result = adminGuard_(body, function () { return getSystemUsage_(); }); break;
       // Web Push
       case 'saveSubscription':  result = withLock_(function () { return saveSubscription_(body); }); break;
@@ -644,6 +756,8 @@ function doPost(e) {
       // 一次性清表（workerSecret 自鉴权；保留 Hubs / schema / 表头）
       case 'wipeAllData':       result = wipeAllDataAction_(body); break;
       case 'purgeOldImages':    result = adminGuard_(body, function () { return withLock_(function () { return purgeOldImagesAction_(body); }); }); break;
+      case 'archiveOldOrders':  result = adminGuard_(body, function () { return withLock_(function () { return archiveOldOrdersAction_(body); }); }); break;
+      case 'getArchivedOrders': result = getArchivedOrders_(body); break;
       default:                  result = { ok: false, error: '未知操作: ' + sanitize_(String(body.action), 50) };
     }
     // C17 fix: cacheFlush_ 已挪进 withLock_ 内（防两请求 flush 交错）。
@@ -1489,7 +1603,7 @@ function resetSeedData_(body) {
   // 重置种子标记，让 ensureSchema_ 在下一次请求时重新播种
   var props = PropertiesService.getScriptProperties();
   props.setProperty('SEEDED5', '0');
-  props.setProperty('SCHEMA_READY8', '0');
+  props.setProperty('SCHEMA_READY9', '0');
   _schemaReady = false;
   // 清空请求缓存
   cacheReset_();
