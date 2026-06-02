@@ -24,7 +24,7 @@ const TAB_SUBSCRIPTIONS = 'Subscriptions';
 const SCHEMA = {
   Vendors: ['vendorId', 'username', 'password', 'passwordHash', 'shopName', 'logo', 'tngLabel', 'HubID', 'active', 'settingsJson', 'payQRsJson', 'categoriesJson', 'plan', 'planUntil', 'isTest'],
   Payments: ['payId', 'vendorId', 'amount', 'plan', 'paidAt', 'periodStart', 'periodEnd', 'note', 'isTest'],
-  Orders: ['orderId', 'vendorId', 'HubID', 'createdAt', 'customerName', 'phone', 'building', 'room', 'items', 'subtotal', 'packagingFee', 'deliveryFee', 'total', 'deliveryTime', 'screenshotUrl', 'status', 'rejectReason', 'deliveryPhotoUrl', 'remark', 'membershipJson', 'isTest'],
+  Orders: ['orderId', 'vendorId', 'HubID', 'createdAt', 'customerName', 'phone', 'building', 'room', 'items', 'subtotal', 'packagingFee', 'deliveryFee', 'total', 'deliveryTime', 'screenshotUrl', 'status', 'rejectReason', 'deliveryPhotoUrl', 'remark', 'membershipJson', 'isTest', 'imagesPurgedAt'],
   Menu: ['itemId', 'vendorId', 'HubID', 'name', 'price', 'available', 'image', 'emoji', 'desc', 'category', 'stock', 'optionsJson', 'discountJson', 'isTest'],
   Hubs: ['hubId', 'name', 'buildingsJson'],
   SystemLogs: ['timestamp', 'actor', 'action', 'details'],
@@ -194,7 +194,7 @@ function ensureSchema_() {
   if (_schemaReady) return;
   const props = PropertiesService.getScriptProperties();
   // 版本号每加一张表都 +1，强制走一次 sheet_/migrateHeaders_ 创建新表 / 补列
-  if (props.getProperty('SCHEMA_READY7') === '1') { _schemaReady = true; return; }
+  if (props.getProperty('SCHEMA_READY8') === '1') { _schemaReady = true; return; }
   Object.keys(SCHEMA).forEach(function (n) { sheet_(n); migrateHeaders_(n); });
   if (props.getProperty('SEEDED5') !== '1') {
     var cfg = defaultConfig_();
@@ -264,7 +264,7 @@ function ensureSchema_() {
     ].forEach(function (m) { upsertRow_(TAB_MENU, 'itemId', m); });
     props.setProperty('SEEDED5', '1');
   }
-  props.setProperty('SCHEMA_READY7', '1'); _schemaReady = true;
+  props.setProperty('SCHEMA_READY8', '1'); _schemaReady = true;
 
   // ==== 一次性 migration：给老 seed 数据补打 isTest='TEST' 标 ====
   // 老版本部署时 seed 没标 TEST，导致 admin「清除测试数据」清不掉
@@ -324,6 +324,73 @@ function wipeAllDataAction_(body) {
   }
   var counts = wipeAllData();
   return { ok: true, wiped: counts };
+}
+
+// ==================== 老订单截图清理（Drive 配额保护） ====================
+// 30 天前的订单：删支付截图 + 送达照（释放 Drive 配额，绕过 15GB 限制），
+// 但保留订单本身和金额、时间、状态等所有文字记录用于对账。
+// imagesPurgedAt 列标时间戳：UI 看到这个标 + 空 screenshotUrl → 显示"截图已归档"
+//
+// 触发方式（任选其一）：
+//   1) admin UI: 测试 tab 加按钮，doPost action='purgeOldImages'
+//   2) 时间触发器（推荐）：Apps Script 编辑器 → 触发器 → 添加触发器 → purgeOldImagesDaily → 每天
+//   3) Worker Cron：每日 POST {action:'purgeOldImages', workerSecret:..., days:30}
+function purgeOldImages_(daysOld) {
+  ensureSchema_();
+  daysOld = Number(daysOld) || 30;
+  var cutoff = Date.now() - daysOld * 86400000;
+  var sh = sheet_(TAB_ORDERS);
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return { ok: true, scanned: 0, deleted: 0, message: 'empty table' };
+  var headers = values[0].map(String);
+  var col = {
+    createdAt: headers.indexOf('createdAt'),
+    screenshotUrl: headers.indexOf('screenshotUrl'),
+    deliveryPhotoUrl: headers.indexOf('deliveryPhotoUrl'),
+    imagesPurgedAt: headers.indexOf('imagesPurgedAt'),
+  };
+  if (col.createdAt < 0 || col.screenshotUrl < 0 || col.imagesPurgedAt < 0) {
+    return { ok: false, error: 'missing required columns (re-run ensureSchema_)' };
+  }
+  var scanned = 0, purged = 0, filesDeleted = 0;
+  // 从第 2 行（数据首行）开始
+  for (var r = 1; r < values.length; r++) {
+    var row = values[r];
+    var createdAt = row[col.createdAt];
+    var ts = createdAt instanceof Date ? createdAt.getTime() : Date.parse(String(createdAt));
+    if (!ts || ts > cutoff) continue;
+    if (row[col.imagesPurgedAt]) continue; // 已清理
+    scanned++;
+    var changed = false;
+    [col.screenshotUrl, col.deliveryPhotoUrl].forEach(function (ci) {
+      if (ci < 0) return;
+      var url = row[ci];
+      if (!url) return;
+      // Drive 文件 ID 提取（一般 25+ 位 base62）
+      var m = String(url).match(/[-\w]{25,}/);
+      if (!m) { row[ci] = ''; changed = true; return; }
+      try { DriveApp.getFileById(m[0]).setTrashed(true); filesDeleted++; } catch (e) { /* 文件已不在，忽略 */ }
+      row[ci] = ''; changed = true;
+    });
+    if (changed) {
+      var rowIdx = r + 1; // sheet 1-based
+      if (col.screenshotUrl >= 0) sh.getRange(rowIdx, col.screenshotUrl + 1).setValue('');
+      if (col.deliveryPhotoUrl >= 0) sh.getRange(rowIdx, col.deliveryPhotoUrl + 1).setValue('');
+      sh.getRange(rowIdx, col.imagesPurgedAt + 1).setValue(new Date().toISOString());
+      purged++;
+    }
+  }
+  cacheReset_(); // 缓存失效，下次读取走全新数据
+  logAction_('system', 'IMAGES_PURGED', 'days=' + daysOld + ' scanned=' + scanned + ' purged=' + purged + ' files=' + filesDeleted);
+  return { ok: true, scanned: scanned, purged: purged, filesDeleted: filesDeleted, daysOld: daysOld };
+}
+
+// Apps Script 时间触发器入口（用户自己在 Apps Script 编辑器 → 触发器 设每天跑）
+function purgeOldImagesDaily() { return purgeOldImages_(30); }
+
+// doPost 调用版（admin 鉴权）
+function purgeOldImagesAction_(body) {
+  return purgeOldImages_(body && body.days);
 }
 
 // ==================== 原始读写工具（仅 schema 初始化用，不参与请求缓存） ====================
@@ -567,7 +634,7 @@ function doPost(e) {
       // 内部测试工具（仅管理员）
       case 'clearTestData':     result = adminGuard_(body, function () { return withLock_(function () { return clearTestData_(body); }); }); break;
       case 'resetSeedData':    result = adminGuard_(body, function () { return withLock_(function () { return resetSeedData_(body); }); }); break;
-      case 'health':            result = adminGuard_(body, function () { return { ok: true, service: 'community-delivery', schema: 'SCHEMA_READY7', time: new Date().toISOString(), counts: { vendors: cacheRead_(TAB_VENDORS).rows.length, orders: cacheRead_(TAB_ORDERS).rows.length, payments: cacheRead_(TAB_PAYMENTS).rows.length, testOrders: cacheFilter_(TAB_ORDERS, 'isTest', 'TEST').length, subscriptions: cacheRead_(TAB_SUBSCRIPTIONS).rows.length } }; }); break;
+      case 'health':            result = adminGuard_(body, function () { return { ok: true, service: 'community-delivery', schema: 'SCHEMA_READY8', time: new Date().toISOString(), counts: { vendors: cacheRead_(TAB_VENDORS).rows.length, orders: cacheRead_(TAB_ORDERS).rows.length, payments: cacheRead_(TAB_PAYMENTS).rows.length, testOrders: cacheFilter_(TAB_ORDERS, 'isTest', 'TEST').length, subscriptions: cacheRead_(TAB_SUBSCRIPTIONS).rows.length } }; }); break;
       case 'getSystemUsage':    result = adminGuard_(body, function () { return getSystemUsage_(); }); break;
       // Web Push
       case 'saveSubscription':  result = withLock_(function () { return saveSubscription_(body); }); break;
@@ -576,6 +643,7 @@ function doPost(e) {
       case 'systemSelfCheck':   result = systemSelfCheck_(body); break;
       // 一次性清表（workerSecret 自鉴权；保留 Hubs / schema / 表头）
       case 'wipeAllData':       result = wipeAllDataAction_(body); break;
+      case 'purgeOldImages':    result = adminGuard_(body, function () { return withLock_(function () { return purgeOldImagesAction_(body); }); }); break;
       default:                  result = { ok: false, error: '未知操作: ' + sanitize_(String(body.action), 50) };
     }
     // C17 fix: cacheFlush_ 已挪进 withLock_ 内（防两请求 flush 交错）。
@@ -935,7 +1003,8 @@ function getOrdersByPhone_(body) {
       deliveryFee: r.deliveryFee, total: r.total, deliveryMode: r.deliveryMode,
       deliveryTime: r.deliveryTime, screenshotUrl: r.screenshotUrl,
       status: r.status, rejectReason: r.rejectReason,
-      deliveryPhotoUrl: r.deliveryPhotoUrl, membershipJson: r.membershipJson, remark: r.remark
+      deliveryPhotoUrl: r.deliveryPhotoUrl, membershipJson: r.membershipJson, remark: r.remark,
+      imagesPurgedAt: r.imagesPurgedAt // 30 天前订单截图已归档的标记
     };
   });
   return { ok: true, orders: safeRows, pollIntervalMs: 12000 };
@@ -960,7 +1029,7 @@ function getOrder_(body) {
              : 12000;
   return {
     ok: true,
-    order: { orderId: o.orderId, status: o.status, rejectReason: o.rejectReason, deliveryTime: o.deliveryTime, total: o.total, deliveryPhotoUrl: o.deliveryPhotoUrl, items: o.items },
+    order: { orderId: o.orderId, status: o.status, rejectReason: o.rejectReason, deliveryTime: o.deliveryTime, total: o.total, deliveryPhotoUrl: o.deliveryPhotoUrl, items: o.items, imagesPurgedAt: o.imagesPurgedAt },
     pollIntervalMs: pollMs
   };
 }
@@ -1420,7 +1489,7 @@ function resetSeedData_(body) {
   // 重置种子标记，让 ensureSchema_ 在下一次请求时重新播种
   var props = PropertiesService.getScriptProperties();
   props.setProperty('SEEDED5', '0');
-  props.setProperty('SCHEMA_READY7', '0');
+  props.setProperty('SCHEMA_READY8', '0');
   _schemaReady = false;
   // 清空请求缓存
   cacheReset_();

@@ -124,6 +124,26 @@
           <p class="muted sm">一次铺满 6 种状态，覆盖商家端各分类标签与客户端各种订单卡。</p>
         </div>
 
+        <!-- Drive 配额保护：删 30 天前订单的支付截图，保留文字记录 -->
+        <div class="card" style="background:#fff7ed;border:1px solid #fed7aa">
+          <div class="card__label">🗑️ 清理老订单图片 <span class="muted sm">释放 Drive 配额</span></div>
+          <p class="sm" style="margin:6px 0;line-height:1.6">
+            删除 <b>{{ purgeDays }} 天前</b>订单的「支付截图」+「送达照」，只保留订单本身和金额/时间/状态。
+            订单文字记录完全保留，对账不受影响。
+            <br>💡 推荐在 Apps Script 编辑器里设<b>每天自动触发</b>：触发器 → 添加 → 函数 <code>purgeOldImagesDaily</code>。
+          </p>
+          <div class="field-row">
+            <label class="field"><span>天数</span><input type="number" v-model.number="purgeDays" min="7" max="365" /></label>
+            <button class="btn btn--primary" style="align-self:end;flex:1" @click="doPurge" :disabled="pb">{{ pb ? '清理中…' : '立即清理 ' + purgeDays + ' 天前的图片' }}</button>
+          </div>
+          <div class="test-out" v-if="purgeResult">
+            <div class="test-line"><span>扫描订单</span><b>{{ purgeResult.scanned }} 单</b></div>
+            <div class="test-line"><span>清理标记</span><b>{{ purgeResult.purged }} 单</b></div>
+            <div class="test-line"><span>Drive 文件删除</span><b>{{ purgeResult.filesDeleted }} 个</b></div>
+            <div class="test-line" v-if="purgeResult.error"><span style="color:#b91c1c">错误</span><b class="bad">{{ purgeResult.error }}</b></div>
+          </div>
+        </div>
+
         <!-- 重置种子数据 -->
         <div class="card test-danger">
           <div class="card__label">🔄 重置全部数据（重新播种）</div>
@@ -149,6 +169,18 @@
       const cnt = reactive({ orders: 0, payments: 0 });
       // 一键造测试商家（基础版/专业版）
       const tsb = ref(false); const lastShop = ref(null);
+      // Drive 配额：清理 N 天前图片
+      const pb = ref(false); const purgeDays = ref(30); const purgeResult = ref(null);
+      async function doPurge() {
+        if (!window.confirm('删除 ' + purgeDays.value + ' 天前订单的支付截图与送达照？\n\n订单文字记录（金额/时间/状态等）完全保留，对账不受影响。\n仅释放 Drive 配额。')) return;
+        pb.value = true;
+        try {
+          var r = await store.purgeOldImages(purgeDays.value);
+          purgeResult.value = r;
+          if (r && r.ok) store.toastSuccess('✅ 清理完成：' + (r.purged || 0) + ' 单标记，' + (r.filesDeleted || 0) + ' 个文件释放');
+          else store.toastError('清理失败：' + (r && r.error || '未知'));
+        } finally { pb.value = false; }
+      }
       function mkTestShop(plan) {
         tsb.value = true;
         try {
@@ -210,7 +242,7 @@
         finally { rb.value = false; }
       }
       onMounted(refreshCnt);
-      return { online, n, hb, cb, rb, health, cnt, ub, usage, cck, check, tsb, lastShop, mkTestShop, loadUsage, runHealth, runCheck, makeOrders, flow, simAll, clear, resetSeed };
+      return { online, n, hb, cb, rb, health, cnt, ub, usage, cck, check, tsb, lastShop, mkTestShop, pb, purgeDays, purgeResult, doPurge, loadUsage, runHealth, runCheck, makeOrders, flow, simAll, clear, resetSeed };
     },
   };
 })();

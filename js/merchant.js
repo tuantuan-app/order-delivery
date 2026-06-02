@@ -163,6 +163,7 @@
             </div>
             <div class="modal__label">💳 支付截图（点击放大对账，可双指放大看单号）</div>
             <img class="shot" v-if="current.screenshot" :src="current.screenshot" alt="" @click="openShot(current.screenshot)" />
+            <div class="shot-missing" v-else-if="current.imagesPurgedAt" style="background:#f0f9ff;color:#0369a1">📄 截图已归档（订单 {{ Math.round((Date.now() - current.createdAt) / 86400000) }} 天前完成，文字记录保留：RM {{ current.total }} · {{ current.deliveryTime }}）</div>
             <div class="shot-missing" v-else>{{ shotState(current).key==='wait' ? '⏳ 客户支付截图上传中，请稍候…' : '⚠ 客户截图还没传上，可联系客户让其重新上传后再对账。' }}</div>
 
             <div class="modal__actions" v-if="current.status==='pending'">

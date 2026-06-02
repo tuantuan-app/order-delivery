@@ -332,6 +332,7 @@
       total: Number(r.total) || subtotal, deliveryMode: r.deliveryMode || 'fixed', deliveryTime: r.deliveryTime || '',
       screenshot: utils.fastDriveImg(r.screenshotUrl || r.screenshot || ''), status: r.status || 'pending', rejectReason: r.rejectReason || '', deliveryPhoto: utils.fastDriveImg(r.deliveryPhotoUrl || ''),
       membershipJson: r.membershipJson || '',
+      imagesPurgedAt: r.imagesPurgedAt || '', // 30 天前订单图片已清理标记（仅 UI 提示用）
     };
   }
 
@@ -1455,6 +1456,12 @@
       // 本地模式：清空后重新播种
       Object.assign(state, seedState());
       return { ok: true, local: true, message: 'Local data re-seeded' };
+    },
+    // 清理 N 天前的订单图片（释放 Drive 配额）；仅 admin 调用，需后端鉴权
+    async purgeOldImages(days) {
+      if (!(window.api && window.api.enabled())) return { ok: false, error: '需要后端' };
+      try { return await window.api.purgeOldImages(days || 30, auth.token); }
+      catch (e) { return { ok: false, error: String(e) }; }
     },
     isOpen(m) {
       if (!m) return false;

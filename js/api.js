@@ -104,6 +104,8 @@ window.api = {
   // 内部测试工具
   clearTestData(token) { return this.post({ action: 'clearTestData', token }); },
   resetSeedData(token) { return this.post({ action: 'resetSeedData', token }); },
+  // 老订单截图清理（Drive 配额保护）：删 N 天前订单的支付截图+送达照，仅留文字记录
+  purgeOldImages(days, token) { return this.post({ action: 'purgeOldImages', days: days || 30, token }, 60000); },
   health(token) { return this.post({ action: 'health', token }, 15000); },
   // 系统配额监控：返回近 7 天每天调用数 + 总执行 ms + Sheet 行数 / cell 用量
   getSystemUsage(token) { return this.post({ action: 'getSystemUsage', token }, 15000); },

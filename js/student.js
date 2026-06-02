@@ -820,6 +820,9 @@
           <div class="card delivered-card" v-if="order.status==='delivered' && order.deliveryPhoto">
             <div class="card__label">📸 您的餐已送达，请查收！</div><img class="delivery-photo" :src="order.deliveryPhoto" alt="" />
           </div>
+          <div class="card" v-else-if="order.status==='delivered' && order.imagesPurgedAt" style="background:#f0f9ff">
+            <div class="card__label" style="color:#0369a1">📄 订单已归档（30 天前完成，照片仅留 30 天，文字记录永久保留）</div>
+          </div>
           <p class="muted center sm" v-else>📲 进度实时更新，送达会立刻显示在这里，请留意本页。</p>
         </template>
 
