@@ -16,6 +16,9 @@ backend/.clasp.json
 # 测试库副本：含 admin 密码 hash 自举代码 + 测试库 scriptId，不入仓库
 backend-test/
 
+# Staging Worker 副本：含 wrangler 本地缓存 + 副本配置，不入仓库
+worker-test/
+
 # 含密码明文的本地验证脚本（仅本人本地用）
 verify-katherine-admin.js
 

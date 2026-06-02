@@ -24,13 +24,20 @@
   // Web Push（Cloudflare Worker）
   // pushWorkerUrl 是公开的（浏览器订阅时不暴露 secret，真正鉴权用 X-Worker-Secret，由 GAS 持有）
   // vapidPublicKey 浏览器必须知道，用于 subscribe(applicationServerKey)
-  var PUSH_WORKER_URL = 'https://tuantuan-push.keidev.workers.dev';
+  var PROD_PUSH_WORKER_URL = 'https://tuantuan-push.keidev.workers.dev';
+  // Staging Worker（只对 ?test 模式有用）：测试库专用边缘缓存代理；不配 VAPID/admin，仅 /api
+  // 让 ?test 模式也能真实测试 Worker 边缘缓存（之前 ?test 直连 GAS 跳过 Worker，少了 70% 真实度）
+  var TEST_PUSH_WORKER_URL = 'https://tuantuan-push-test.keidev.workers.dev';
   var VAPID_PUBLIC_KEY = 'BA-VEznSdqmxxNaGpj8dO8yksm9DzNxV0UCPzHd7fAmb8WPxY_-lPudb87MTdKYDrxIJpjnk8cGXhn6LK7seQ9w';
+
+  var pushWorkerUrl = env === 'prod' ? PROD_PUSH_WORKER_URL
+                    : env === 'test' ? TEST_PUSH_WORKER_URL
+                    : ''; // demo 模式无 Worker
 
   window.APP_CONFIG = {
     apiBase: apiBase,
     env: env,
-    pushWorkerUrl: PUSH_WORKER_URL,
+    pushWorkerUrl: pushWorkerUrl,
     vapidPublicKey: VAPID_PUBLIC_KEY,
   };
 

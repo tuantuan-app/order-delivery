@@ -19,10 +19,12 @@
 window.api = {
   base() { return (window.APP_CONFIG && window.APP_CONFIG.apiBase) || ''; },
   cacheBase() {
-    // ?test 模式直连测试 GAS，跳过 Worker：测试数据绝不污染边缘缓存
-    // ?demo 模式无后端，cacheBase 也用不到
+    // prod 模式：走 prod Worker（tuantuan-push.keidev.workers.dev）边缘缓存
+    // test 模式：走 staging Worker（tuantuan-push-test.keidev.workers.dev）真实测试边缘缓存
+    //          staging Worker 配的是测试 GAS URL，与 prod 隔离 → 测试数据不污染线上缓存
+    // demo 模式：无后端，cacheBase() 返空，不走 Worker
     var env = (window.APP_CONFIG && window.APP_CONFIG.env) || 'prod';
-    if (env !== 'prod') return '';
+    if (env === 'demo') return '';
     var w = (window.APP_CONFIG && window.APP_CONFIG.pushWorkerUrl) || '';
     return w ? (w + '/api') : '';
   },
