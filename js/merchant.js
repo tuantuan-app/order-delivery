@@ -589,8 +589,10 @@
         </div>
 
         <div class="card" v-if="store.merchant.settings.deliveryOffered">
-          <div class="card__label">🏢 配送楼栋（客户下单从这里选，避免地址写乱）</div>
-          <p class="muted sm">勾选你配送的楼栋；同社区其他商家加过的会出现在这里供勾选，没有的在下面添加（会进社区共享池，别家也能勾到）。</p>
+          <div class="card__label">🏢 配送楼栋（客户下单从这里选，避免地址写乱）
+            <span class="muted sm" style="float:right">已选 {{ (store.merchant.settings.coverage||[]).length }} / 25</span>
+          </div>
+          <p class="muted sm">勾选你配送的楼栋（最多 25 个，避免运力撑不住）；同社区其他商家加过的会出现在这里供勾选，没有的在下面添加（会进社区共享池，别家也能勾到）。</p>
           <div class="cov-grid" v-if="store.hubBuildings(store.merchant.hubId).length">
             <label class="cov-chip" v-for="b in store.hubBuildings(store.merchant.hubId)" :key="b" :class="{on: (store.merchant.settings.coverage||[]).indexOf(b)>=0}">
               <input type="checkbox" :checked="(store.merchant.settings.coverage||[]).indexOf(b)>=0" @change="store.toggleCoverage(store.merchant.id, b)" hidden />{{ b }}

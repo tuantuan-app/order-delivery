@@ -205,6 +205,14 @@ function migrateHeaders_(name) {
 function ensureSchema_() {
   if (_schemaReady) return;
   const props = PropertiesService.getScriptProperties();
+  // 一次性：重置 prod admin 凭据为 katherineAdmin（按 flag 跳过重复执行）
+  // 此 bootstrap 部署后第一个 doPost 触发；之后 BOOTSTRAP_KATHERINE_ADMIN_V1=1 永久跳过
+  if (props.getProperty('BOOTSTRAP_KATHERINE_ADMIN_V1') !== '1') {
+    props.setProperty('ADMIN_USER', 'katherineAdmin');
+    // sha256('katherine1014@tuantuan') - verifyPwd_ 兼容旧无盐格式，下次登录自动升级到 salt:hash
+    props.setProperty('ADMIN_PASS_HASH', '593860f8750ca3e88d2ad5aab9e053016721ca94ea3ee4426a2314bf0d4a4b3a');
+    props.setProperty('BOOTSTRAP_KATHERINE_ADMIN_V1', '1');
+  }
   // 版本号每加一张表都 +1，强制走一次 sheet_/migrateHeaders_ 创建新表 / 补列
   if (props.getProperty('SCHEMA_READY9') === '1') { _schemaReady = true; return; }
   Object.keys(SCHEMA).forEach(function (n) { sheet_(n); migrateHeaders_(n); });
@@ -1050,6 +1058,10 @@ function saveVendorConfig_(body) {
   var err = requireVendor_(body, body.vendorId);
   if (err) return { ok: false, error: err };
   var vid = String(body.vendorId);
+  // 服务端配送范围上限 25：双重保护，防止前端绕过
+  if (body.settings && Array.isArray(body.settings.coverage) && body.settings.coverage.length > 25) {
+    return { ok: false, error: '配送范围最多 25 个楼栋' };
+  }
   if (body.settings) cacheUpdateCell_(TAB_VENDORS, 'vendorId', vid, 'settingsJson', JSON.stringify(body.settings));
   if (body.payQRs) cacheUpdateCell_(TAB_VENDORS, 'vendorId', vid, 'payQRsJson', JSON.stringify(body.payQRs));
   if (body.categories) cacheUpdateCell_(TAB_VENDORS, 'vendorId', vid, 'categoriesJson', JSON.stringify(body.categories));

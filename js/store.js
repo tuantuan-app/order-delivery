@@ -546,7 +546,19 @@
       } catch (e) {}
     },
     hubBuildings(hubId) { var h = state.hubs.find(function (x) { return x.id === hubId; }); return (h && h.buildings) || []; },
-    toggleCoverage(mid, name) { var m = this.getMerchant(mid); if (!m) return; if (!m.settings.coverage) m.settings.coverage = []; var i = m.settings.coverage.indexOf(name); if (i >= 0) m.settings.coverage.splice(i, 1); else m.settings.coverage.push(name); this._syncMerchantConfig(mid); },
+    // 配送范围上限 25：商家自己运力管控，避免覆盖整个社区跑不过来
+    // 取消选择不受限，只在添加时检查
+    toggleCoverage(mid, name) {
+      var m = this.getMerchant(mid); if (!m) return;
+      if (!m.settings.coverage) m.settings.coverage = [];
+      var i = m.settings.coverage.indexOf(name);
+      if (i >= 0) { m.settings.coverage.splice(i, 1); }
+      else {
+        if (m.settings.coverage.length >= 25) { this.toastError('配送范围最多 25 个楼栋'); return; }
+        m.settings.coverage.push(name);
+      }
+      this._syncMerchantConfig(mid);
+    },
     async addBuildingToHub(mid, name) {
       var m = this.getMerchant(mid); if (!m) return; name = (name || '').trim(); if (!name) return;
       var added = false;
