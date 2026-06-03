@@ -1403,8 +1403,18 @@ function updateOrderStatus_(body) {
     cacheUpdateCell_(TAB_ORDERS, 'orderId', orderId, 'deliveryPhotoUrl', photoUrl);
   }
 
-  // 拒绝时退回会员积分
-  if (status === 'rejected') returnMembershipPoints_(o);
+  // 🐛 H16 fix server-side：商家拒单 → 服务端恢复库存（之前只前端乐观恢复，Sheet 没改）
+  //    cancelOrder_ 也做这事，但 reject 走的是 updateOrderStatus_，之前漏了
+  if (status === 'rejected') {
+    returnMembershipPoints_(o);
+    var rejItems = safeParse_(o.items) || [];
+    rejItems.forEach(function (it) {
+      var mm = cacheFind_(TAB_MENU, 'itemId', it.id);
+      if (mm && mm.stock !== null && mm.stock !== '' && !isNaN(Number(mm.stock))) {
+        cacheUpdateCell_(TAB_MENU, 'itemId', it.id, 'stock', Number(mm.stock) + Number(it.qty || 1));
+      }
+    });
+  }
 
   logAction_(tokenPrincipal_(body.token) || 'merchant', 'ORDER_' + status.toUpperCase(), 'orderId=' + orderId);
   // 状态变更 → 推送给客户（cooking/delivering/delivered/rejected 都有对应模板）
