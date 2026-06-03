@@ -60,13 +60,16 @@ window.api = {
     var self = this;
     var action = payload && payload.action;
     // 走 Worker 还是直连？
-    var useCache = !!(action && CACHEABLE[action] && self.cacheBase());
-    var url = useCache ? self.cacheBase() : self.base();
+    //   CACHEABLE 读 → Worker 边缘缓存
+    //   其它（写、login）也优先走 Worker（避开浏览器→GAS 的 CORS/网络抖动问题）
+    //   Worker 内部对非 CACHEABLE action 直接透传 GAS，零额外延迟
+    //   失败自动 fallback 到 GAS 直连（兜底）
+    var preferWorker = !!self.cacheBase();
+    var url = preferWorker ? self.cacheBase() : self.base();
     try {
       return await self._postTo(url, payload, timeoutMs);
     } catch (e) {
-      // Worker 失败（超时/CORS/5xx）→ 自动回退 GAS 直连
-      if (useCache && self.base()) {
+      if (preferWorker && self.base()) {
         try { console.warn('[api] /api worker failed for ' + action + ', fallback to GAS:', (e && e.message || e)); } catch (_) {}
         return await self._postTo(self.base(), payload, timeoutMs);
       }
