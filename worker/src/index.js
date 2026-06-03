@@ -470,19 +470,27 @@ const INVALIDATION = {
       { action: 'getOrder', orderId: o.orderId },
       { action: 'getVendorOrders', vendorId: o.vendorId },
       { action: 'getOrdersByPhone', phone: o.phone },
+      // 🐛 H2 补漏：之前 placeOrder 没失效 getStorefront → 库存扣减后客户看到旧 stock
+      // 真实场景：顾客 A 抢走最后 1 份 → 顾客 B 60s 内仍看到 stock=1 → 下单失败 → 体验差
+      { action: 'getStorefront', vendorId: o.vendorId },
     ].filter(x => Object.values(x).every(v => v != null && v !== ''));
   },
+  // 取消/拒单同样会恢复库存 → 也要失效 getStorefront
+  cancelOrder: (b) => ([
+    { action: 'getOrder', orderId: b && b.orderId },
+    { action: 'getVendorOrders', vendorId: b && b.vendorId },
+    { action: 'getStorefront', vendorId: b && b.vendorId },
+  ]).filter(x => x.orderId || x.vendorId),
   // H2 fix: 之前 updateOrderStatus 只失效 getOrder，没失效 getVendorOrders → 商家界面
   // 看到的订单列表里状态可能是缓存的旧值。saveVendorConfig 同理：商家改店设置后，
   // 客户端 listPublicVendors 还是旧 open/hub 状态。再补几个 admin 楼栋操作。
   updateOrderStatus: (b) => ([
     { action: 'getOrder', orderId: b && b.orderId },
     { action: 'getVendorOrders', vendorId: b && b.vendorId },
+    // 拒单会恢复库存（H16 fix）→ 也要失效 getStorefront
+    { action: 'getStorefront', vendorId: b && b.vendorId },
   ]).filter(x => x.orderId || x.vendorId),
-  cancelOrder: (b) => ([
-    { action: 'getOrder', orderId: b && b.orderId },
-    { action: 'getVendorOrders', vendorId: b && b.vendorId },
-  ]).filter(x => x.orderId || x.vendorId),
+  // cancelOrder 移到 placeOrder 同区（含 getStorefront 失效），删除重复声明
   attachScreenshot: (b) => ([
     { action: 'getOrder', orderId: b && b.orderId },
     { action: 'getVendorOrders', vendorId: b && b.vendorId },

@@ -1229,21 +1229,22 @@ function placeOrder_(body) {
       }
     }
   }
-  // 重算合计：小计 + 打包 + 配送 - 会员抵扣（C11 fix: use server-enforced fees）
+  // C10+C11 fix: 服务端计算费用 + 与客户端发的对比（顺序必须正确：先算 → 校验 → 再覆盖）
+  // 🐛 之前 bug：srvPkg/srvDel 在使用后才声明，var hoisting 让它们是 undefined，
+  //     o.packagingFee 被错误置为 undefined，后面校验 Number(undefined)||0 = 0，
+  //     与真 srvPkg=0.50 不符 → 任何启用了费用的商家所有订单全被拒。
+  // 修：先定义 srvPkg/srvDel，再校验，再覆盖
+  var srvPkg = (settings.fees && settings.fees.packaging && settings.fees.packaging.enabled) ? (Number(settings.fees.packaging.amount) || 0) : 0;
+  var srvDel = (settings.fees && settings.fees.delivery && settings.fees.delivery.enabled) ? (Number(settings.fees.delivery.amount) || 0) : 0;
+  // 校验客户端发的费用是否与商家设置一致（防客户端绕过包装/配送费）
+  if (Math.abs((Number(o.packagingFee) || 0) - srvPkg) > 0.01 || Math.abs((Number(o.deliveryFee) || 0) - srvDel) > 0.01) {
+    return { ok: false, error: '费用与商家设置不符' };
+  }
+  // 重算合计：小计 + 打包 + 配送 - 会员抵扣
   var srvSubtotal = items.reduce(function (s, it) { return s + (Number(it.price) || 0) * (Number(it.qty) || 0); }, 0);
   o.packagingFee = srvPkg;
   o.deliveryFee = srvDel;
   o.total = Math.round((srvSubtotal + srvPkg + srvDel - membershipDiscount) * 100) / 100;
-
-  // C10+C11 fix: cross-reference prices + fees + stock against server-side config
-  // C11: enforce packaging/delivery fees from vendor settings
-  if (settings.fees) {
-    var srvPkg = (settings.fees.packaging && settings.fees.packaging.enabled) ? (Number(settings.fees.packaging.amount) || 0) : 0;
-    var srvDel = (settings.fees.delivery && settings.fees.delivery.enabled) ? (Number(settings.fees.delivery.amount) || 0) : 0;
-    if (Math.abs((Number(o.packagingFee) || 0) - srvPkg) > 0.01 || Math.abs((Number(o.deliveryFee) || 0) - srvDel) > 0.01) {
-      return { ok: false, error: '费用与商家设置不符' };
-    }
-  }
   for (var i = 0; i < items.length; i++) {
     var it = items[i];
     var m = menu.find(function (x) { return String(x.itemId) === String(it.id); });
