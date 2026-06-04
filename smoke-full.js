@@ -493,9 +493,19 @@ function pickElText(p, sel) {
   const tally = findings.reduce((a, f) => ((a[f.tag] = (a[f.tag] || 0) + 1), a), {});
   Object.keys(tally).sort().forEach(t => console.log(`  ${t}: ${tally[t]}`));
   console.log('\n-- console / page errors per page --');
+  let pageErrCount = 0;
   for (const [pg, errs] of errorsByPage) {
     console.log(`  ${pg}: ${errs.length} errors`);
     errs.slice(0, 5).forEach(e => console.log(`    ${e}`));
+    pageErrCount += errs.length;
   }
   console.log(`\n  shots dir: ${OUT}`);
+  // T-C1 fix: exit non-zero on FAIL or page/console errors so CI actually gates regressions.
+  const failCount = (tally.FAIL || 0) + pageErrCount;
+  if (failCount) {
+    console.log(`\n  ❌ exit 1 (FAIL=${tally.FAIL || 0}, pageErrors=${pageErrCount})`);
+    process.exit(1);
+  }
+  console.log('\n  ✅ exit 0');
+  process.exit(0);
 })();

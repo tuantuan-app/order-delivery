@@ -71,7 +71,9 @@ if (cacheTbl) {
 } else bad('B.1 找不到 CACHEABLE');
 
 // B.2 fallback 逻辑：catch 后用 GAS 直连
-if (/useCache[\s\S]{0,200}_postTo\(self\.base\(\)/.test(apiSrc)) ok('B.2 fallback 链路：Worker fail → GAS 直连');
+// 实现在 api.js post() 内：preferWorker → 失败 catch 里 _postTo(self.base())
+// 用 catch 块作锚（比变量名稳）。
+if (/catch[\s\S]{0,300}_postTo\(self\.base\(\)/.test(apiSrc)) ok('B.2 fallback 链路：Worker fail → GAS 直连');
 else bad('B.2 fallback 链路缺失');
 
 // B.3 cacheBase 函数存在

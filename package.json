@@ -1,4 +1,14 @@
 {
+  "name": "tuantuan-order-delivery",
+  "private": true,
+  "scripts": {
+    "test": "node tests/runner.js --suite=fast",
+    "test:fast": "node tests/runner.js --suite=fast",
+    "test:medium": "node tests/runner.js --suite=medium",
+    "test:slow": "node tests/runner.js --suite=slow",
+    "test:server-external": "node tests/runner.js --suite=fast --no-server",
+    "serve": "python -m http.server 8777"
+  },
   "devDependencies": {
     "playwright": "^1.60.0"
   }

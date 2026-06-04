@@ -1,0 +1,56 @@
+name: Test Gate (Fast Suite)
+
+# T-C2: PR-gate CI。修复前 push 到 main 直接发版，无任何门控。
+# 现在：PR 进 main + push 到 main 必须先过 fast suite（~30s，全 demo，不打外网）。
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# 同一分支新 push 自动取消旧 run，省 minutes
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Python (for http.server)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: npm install --no-audit --no-fund
+
+      - name: Install Playwright browser
+        # 只装 chromium（项目所有 smoke 都用 chromium，省 ~200MB）
+        run: npx playwright install --with-deps chromium
+
+      - name: Run fast suite
+        run: npm run test:fast
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-shots-${{ github.run_id }}
+          path: |
+            smoke-shots/
+            smoke-deep-shots/
+            smoke-legal-shots/
+            smoke-notify-shots/
+            smoke-full-shots/
+          retention-days: 7
+          if-no-files-found: ignore
