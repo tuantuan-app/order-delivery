@@ -113,6 +113,13 @@ img { display: block; }
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
 
+/* 手机号输入：左侧固定 +60 国码（大马默认） */
+.field--phone .phone-input { display: flex; align-items: stretch; border: 1px solid var(--line); border-radius: var(--r-sm); background: #fafafa; overflow: hidden; }
+.field--phone .phone-input:focus-within { border-color: var(--green); background: #fff; }
+.field--phone .phone-input__cc { display: flex; align-items: center; padding: 0 10px; background: #f1f5f4; color: #374151; font-size: 14px; font-weight: 600; white-space: nowrap; border-right: 1px solid var(--line); user-select: none; }
+.field--phone .phone-input input { flex: 1; border: 0; background: transparent; padding: 11px 12px; }
+.field--phone .phone-input input:focus { outline: none; background: transparent; }
+
 /* ===== 登录页 ===== */
 .login { min-height: 100dvh; padding: 18px 16px 40px; }
 .login__back { color: var(--link); font-size: 14px; text-decoration: none; }
@@ -181,7 +188,9 @@ img { display: block; }
 
 /* 客户：底部导航页（订单/我的） */
 .student { padding-bottom: 60px; }
-.cust-page { padding: 6px 0 16px; }
+/* Bug 4 fix: tabbar (fixed, height 56px) covers the last items of "订单"/"我的" tabs.
+   Reserve enough bottom space so e.g. "通过 WhatsApp 发送" isn't sliced in half. */
+.cust-page { padding: 6px 0 80px; }
 .cust-head { font-weight: 700; font-size: 17px; padding: 14px 16px 6px; }
 .profile-chip { margin: 0 12px 8px; padding: 8px 14px; background: #fff; border-radius: var(--r); font-size: 13px; color: #555; }
 .profile-card { display: flex; align-items: center; gap: 12px; background: #fff; margin: 0 12px 10px; padding: 16px; border-radius: var(--r); }
@@ -319,6 +328,10 @@ img { display: block; }
 /* ===== 状态页 + 动效 ===== */
 .status { padding-bottom: 16px; }
 .status__order { text-align: center; color: var(--muted); font-size: 12.5px; padding: 14px 16px 6px; }
+/* UX#10: subtle back link shown only on terminal-state status pages — lets users opened via
+   "订单" history return to that list without round-tripping through 再点一单 → 菜单 */
+.status__back { display: inline-flex; align-items: center; gap: 2px; padding: 10px 14px; margin: 4px 0 0 8px; color: var(--green); font-size: 14px; font-weight: 500; background: transparent; border-radius: 8px; }
+.status__back:active { background: rgba(0,0,0,.04); }
 .status-hero { text-align: center; margin: 0 12px 12px; border-radius: var(--r); padding: 26px 16px; background: #fff; transition: background .4s; }
 .status-hero.hero--pending { background: var(--amber-bg); }
 .status-hero.hero--cooking { background: #fff1e6; }
@@ -901,6 +914,15 @@ input:focus:not(:focus-visible), select:focus:not(:focus-visible), textarea:focu
 
 /* ============= 社区选择器（HubPicker，强制首次选社区） ============= */
 .hub-picker { padding-top: 4px; }
+/* UX#5: short headshake when user tries to dismiss the mandatory modal by tapping outside.
+   Signals "must pick" without a popup. Pure transform, doesn't shift layout. */
+.hub-picker--shake { animation: pickerShake .42s cubic-bezier(.36,.07,.19,.97) both; }
+@keyframes pickerShake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(3px); }
+  30%, 50%, 70% { transform: translateX(-5px); }
+  40%, 60% { transform: translateX(5px); }
+}
 .hub-picker__title { font-size: 18px; font-weight: 700; color: #111827; margin-bottom: 6px; }
 .hub-picker__sub { color: #6b7280; font-size: 13px; margin-bottom: 16px; line-height: 1.5; }
 .hub-picker__list { display: flex; flex-direction: column; gap: 10px; }

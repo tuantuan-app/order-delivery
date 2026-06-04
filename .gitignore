@@ -21,6 +21,9 @@ worker-test/
 
 # 含密码明文的本地验证脚本（仅本人本地用）
 verify-katherine-admin.js
+pressure-test-concurrent-order.js
+pressure-test-e2e-flow.js
+prod-test-all.js
 
 # Build / deploy artifacts
 dist/
@@ -50,3 +53,8 @@ smoke-deep-shots/
 test-*.png
 
 smoke-legal-shots/
+walkthrough-shots/
+bugfix-shots/
+stress-shots/
+verify-user-shots/
+verify-phone-pwa-shots/

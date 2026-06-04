@@ -115,6 +115,24 @@
     // ---- v3: 输入校验 ----
     validateName(name) { if (!name || String(name).trim().length === 0) return '姓名不能为空'; if (String(name).length > 60) return '姓名不能超过60个字符'; return null; },
     validatePhone(phone) { var s = String(phone || '').replace(/\D/g, ''); if (s.length < 7 || s.length > 15) return '手机号格式不正确（7-15位）'; return null; },
+    // 手机号归一化（大马默认 +60）。存储字段保持用户原样不动；本组 helper 只负责出口。
+    //   原始 "0123456789" / "123456789" / "60123456789" / "+60 12-345 6789" → 统一拿到本机 9-10 位 + 国码
+    //   waPhone   → "60xxxxxxxxx" (wa.me / 推送)
+    //   displayPhone → "+60 xx-xxx xxxx" (UI 显示)
+    waPhone(p) {
+      var d = String(p || '').replace(/\D/g, ''); if (!d) return '';
+      if (d.charAt(0) === '0') d = '60' + d.slice(1);                       // 0123… → 60123…
+      else if (d.slice(0, 2) !== '60' && d.length <= 10) d = '60' + d;       // 123…  → 60123…
+      return d;
+    },
+    displayPhone(p) {
+      var w = this.waPhone(p); if (!w) return String(p || '');
+      var local = w.slice(2);                                                // 去 60
+      // 大马标准断字：前 2-3 位是 carrier，剩余 6-7 位
+      if (local.length >= 9) return '+60 ' + local.slice(0, 2) + '-' + local.slice(2, 5) + ' ' + local.slice(5);
+      if (local.length >= 7) return '+60 ' + local.slice(0, 2) + '-' + local.slice(2);
+      return '+60 ' + local;
+    },
     validateRequired(val, label) { if (!val || String(val).trim().length === 0) return (label || '字段') + '不能为空'; return null; },
     sanitize(val, maxLen) { if (val === null || val === undefined) return ''; var s = String(val).replace(/[<>"']/g, ''); if (maxLen && s.length > maxLen) s = s.slice(0, maxLen); return s; },
 
@@ -962,7 +980,14 @@
     },
     cancelOrder(id) {
       var o = this.getOrder(id);
-      if (o && o.status === 'pending') { o.status = 'cancelled'; o._localMutAt = Date.now(); this.sync_({ action: 'cancelOrder', orderId: id }); }
+      if (o && o.status === 'pending') {
+        o.status = 'cancelled'; o._localMutAt = Date.now();
+        // Bug 2 fix: the "📤 订单已提交，正在确认…" toast (3.5s) is misleading once
+        // the user has cancelled — it still says "正在确认" while the order is gone.
+        // Drop any lingering toast on cancel so the cancelled state speaks for itself.
+        if (toast.visible) { toast.visible = false; if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; } }
+        this.sync_({ action: 'cancelOrder', orderId: id });
+      }
     },
 
     // 客户资料（v4：地址簿，支持多地址 + 默认 + 切换）
@@ -1074,7 +1099,11 @@
       var m = this.getMerchant(mid); if (!m || !item) return;
       this.sync_({ action: 'saveProduct', product: { itemId: item.id, vendorId: mid, HubID: m.hubId || '', name: item.name, price: item.price, available: item.available, image: item.image || '', emoji: item.emoji || '', desc: item.desc || '', category: item.category || '', stock: item.stock == null ? '' : item.stock, optionsJson: item.optionGroups || [], discountJson: item.discount || null } });
     },
-    backToMerchants() { ui.studentStep = 'merchants'; ui.studentMerchantId = null; },
+    backToMerchants() {
+      ui.studentStep = 'merchants'; ui.studentMerchantId = null;
+      // Bug 2 fix: dismiss any lingering submission/status toast when navigating home.
+      if (toast.visible) { toast.visible = false; if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; } }
+    },
     previewAsStudent(merchantId) { ui.preview = true; ui.studentMerchantId = merchantId; ui.studentStep = 'menu'; },
     previewStorefront() { ui.preview = true; ui.studentMerchantId = null; ui.studentStep = 'merchants'; },
     exitPreview() { ui.preview = false; ui.studentStep = 'merchants'; ui.studentMerchantId = null; },

@@ -127,7 +127,7 @@
         <div class="empty" v-else-if="!filtered.length">{{ searching ? '未找到匹配的订单' : (filter==='pending' ? '没有待处理的订单 🎉' : '该分类暂无订单') }}</div>
         <div class="order-card" v-for="o in filtered" :key="o.id" @click="current=o">
           <div class="order-card__top"><span><b class="order-card__id">{{ o.id }}</b> <span class="muted sm">{{ store.utils.relTime(o.createdAt) }}</span></span><span class="chip" :class="st(o.status).cls">{{ st(o.status).label }}</span></div>
-          <div class="order-card__cust">{{ o.customer.name }} · {{ o.customer.building }} {{ o.customer.room }} · {{ o.customer.phone }}</div>
+          <div class="order-card__cust">{{ o.customer.name }} · {{ o.customer.building }} {{ o.customer.room }} · {{ store.utils.displayPhone(o.customer.phone) }}</div>
           <div class="order-card__meta"><span>{{ o.items.reduce((s,i)=>s+i.qty,0) }} 件 · {{ store.utils.rm(o.total) }}</span><span>🕒 {{ o.deliveryTime }}</span></div>
           <div class="order-card__remark" v-if="o.remark">📝 {{ o.remark }}</div>
           <div class="order-card__shot" v-if="shotState(o).key==='wait'">⏳ 支付截图上传中…</div>
@@ -152,7 +152,7 @@
         <div class="modal" v-if="current" @click.self="current=null">
           <div class="modal__panel">
             <div class="modal__head"><span>订单 {{ current.id }}</span><button class="link-btn" @click="current=null">关闭</button></div>
-            <div class="kv"><span>顾客</span><b>{{ current.customer.name }} <a class="tel" :href="'tel:'+current.customer.phone">📞 {{ current.customer.phone }}</a></b></div>
+            <div class="kv"><span>顾客</span><b>{{ current.customer.name }} <a class="tel" :href="'tel:+'+store.utils.waPhone(current.customer.phone)">📞 {{ store.utils.displayPhone(current.customer.phone) }}</a></b></div>
             <div class="kv"><span>送达</span><b>{{ current.customer.building }} {{ current.customer.room }}</b></div>
             <div class="kv"><span>时间</span><b>{{ current.deliveryTime }}</b></div>
             <div class="remark-box" v-if="current.remark">📝 客户备注：{{ current.remark }}</div>
@@ -356,8 +356,14 @@
       function batchDeliverGo() { if (!batchSel.length) return; var n = batchSel.length; if (!window.confirm('确认将 ' + n + ' 个订单标记为已送达？此操作不可撤回。')) return; store.batchDeliver(batchSel.slice(), batchPhoto.value); store.toastSuccess('已送达 ' + n + ' 单' + (batchPhoto.value ? '，到货照片已发给这些客户' : '')); batchSel.splice(0); batchPhoto.value = ''; batchOpen.value = false; }
       function batchCopyGo() { var m = store.merchant; var shop = m ? m.name : '商家'; var t = '【' + shop + '】您的订单已送达 🎉 请查收，感谢惠顾！'; if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { store.toastSuccess('群发文案已复制'); }, function () { window.prompt('复制群发文案：', t); }); else window.prompt('复制群发文案：', t); }
       function st(s) { return STATUS_TEXT[s] || { label: s, cls: '' }; }
-      // 两阶段下单：截图为空 + 超龄(>60s) → 异常单（派生，不依赖后端新状态）
-      function shotState(o) { if (o.screenshot) return { key: 'ok' }; if (o.status === 'rejected' || o.status === 'cancelled') return { key: 'na' }; return (Date.now() - (Number(o.createdAt) || 0) < 60000) ? { key: 'wait' } : { key: 'missing' }; }
+      // 两阶段下单：截图为空时，默认按"还在上传"处理；只有真正超龄(>5min)才提示客户没传上
+      //   - 旧阈值 60s 在慢网下经常误判，让商家以为客户没传 → 改 5min 给慢网/大图压缩留足余量
+      //   - 客户端 imgStatus='uploading' 本地状态后端拿不到，所以这里靠"订单创建时间"近似推断
+      function shotState(o) {
+        if (o.screenshot) return { key: 'ok' };
+        if (o.status === 'rejected' || o.status === 'cancelled') return { key: 'na' };
+        return (Date.now() - (Number(o.createdAt) || 0) < 5 * 60 * 1000) ? { key: 'wait' } : { key: 'missing' };
+      }
       // 通知客户（WhatsApp wa.me 免费跳转 / 复制文案）。大马号 0xxx → 60xxx
       function waPhone(p) { var d = String(p || '').replace(/\D/g, ''); if (!d) return ''; if (d.charAt(0) === '0') d = '60' + d.slice(1); else if (d.slice(0, 2) !== '60' && d.length <= 10) d = '60' + d; return d; }
       function notifyMsg(o) {

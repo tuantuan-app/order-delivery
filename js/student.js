@@ -58,7 +58,21 @@
           <checkout-view v-else :merchant="store.studentMerchant" :lines="cart" :subtotal="cartTotal" :preview="ui.preview" @back="ui.studentStep='menu'" @submitted="onSubmitted" @inc="incLine" @dec="decLine"></checkout-view>
         </template>
 
-        <order-status v-else-if="ui.studentStep === 'status'" @neworder="startNew"></order-status>
+        <order-status v-else-if="ui.studentStep === 'status'" @neworder="startNew" @back="goTab('orders')"></order-status>
+
+        <!-- iOS / Android PWA 首启动恢复引导：standalone 与浏览器是独立存储域，加主屏后本地资料丢失 -->
+        <div class="modal" v-if="pwaRestoreOpen" @click.self="pwaDismiss">
+          <div class="modal__panel">
+            <div class="modal__head"><span>📱 欢迎回到团团</span><button class="link-btn" @click="pwaDismiss">稍后</button></div>
+            <p class="muted sm" style="margin:6px 0 12px">首次在桌面 App 打开？输入你之前下单用的手机号，自动恢复历史订单和地址。</p>
+            <label class="field field--phone"><span>手机号</span>
+              <div class="phone-input"><span class="phone-input__cc">🇲🇾 +60</span><input v-model="pwaPhone" type="tel" inputmode="numeric" placeholder="12-345 6789（或 0123456789）" maxlength="15" /></div>
+            </label>
+            <p class="error" v-if="pwaErr">{{ pwaErr }}</p>
+            <button class="btn btn--primary btn--block" :disabled="pwaSubmitting" @click="pwaSubmit">{{ pwaSubmitting ? '正在恢复…' : '恢复' }}</button>
+            <p class="muted sm center" style="margin-top:10px">首次使用？点「稍后」直接开始点单。</p>
+          </div>
+        </div>
 
         <!-- 客户底部导航：仅在顶层视图显示（店内/结算/状态时隐藏，专注下单流程） -->
         <nav class="tabbar" v-if="!ui.preview && showNav" role="navigation" aria-label="主导航">
@@ -106,8 +120,19 @@
       // 客户端进入即拉公开商家列表（在线模式 → 替换本地 seedState；离线 → 用本地 demo）
       store.loadPublicVendors();
       store.loadHubs(); // 拉社区共享楼栋池（地址簿/送达切换用）
-      // 底部导航
-      const showNav = computed(() => ui.studentTab !== 'home' || ui.studentStep === 'merchants');
+      // 底部导航：店内 / 结算 / 进行中订单 隐藏；首页与终态订单显示。
+      // 终态（已取消/已拒/已送达 + 服务端整单未成）= 客单已结束，让用户自由切到「订单」「我的」
+      const showNav = computed(() => {
+        if (ui.studentTab !== 'home') return true;
+        if (ui.studentStep === 'merchants') return true;
+        if (ui.studentStep === 'status') {
+          var o = store.activeOrder;
+          if (!o) return true;
+          if (o.syncStatus === 'rejected') return true;
+          if (o.status === 'cancelled' || o.status === 'rejected' || o.status === 'delivered') return true;
+        }
+        return false;
+      });
       function goTab(t) { ui.studentTab = t; if (t === 'home' && ['orders', 'me'].indexOf(ui.studentStep) < 0 && !store.activeOrder) ui.studentStep = 'merchants'; }
       function openHistory(id) { store.state.activeOrderId = id; ui.studentTab = 'home'; ui.studentStep = 'status'; }
       // 再来一单：进店并把可直接复购的商品加回购物车（含规格/已下架的提示手动选）
@@ -132,7 +157,83 @@
       function ptrEnd() { if (pullDist.value > 45) store.refreshStorefront(ui.studentMerchantId); pullDist.value = 0; startY = null; }
       onMounted(function () { pullArea.value && pullArea.value.addEventListener('touchmove', ptrMove, { passive: false }); });
       onUnmounted(function () { pullArea.value && pullArea.value.removeEventListener('touchmove', ptrMove); });
-      return { store, ui, cart, open, preorder, needProfile, sheetItem, cartCount, cartTotal, qtyOfItem, stockLeft, addSimple, removeSimple, openSheet, addLine, incLine, decLine, onSubmitted, startNew, showNav, goTab, openHistory, reorder, liveCount, pullDist, pullArea, ptrStart, ptrMove, ptrEnd };
+
+      // ====== iOS/Android PWA 首启动恢复 ======
+      // 加主屏后 PWA 是独立存储域（与 Safari 不共享 localStorage/push subscription）
+      // → 首次启动若没 profile，弹引导：输入手机号 → loadMyOrders + 从历史订单反推地址 + 申请通知权限
+      var PWA_DONE_KEY = 'tt_pwa_first_done';
+      var pwaRestoreOpen = ref(false);
+      var pwaPhone = ref('');
+      var pwaErr = ref('');
+      var pwaSubmitting = ref(false);
+      function pwaDismiss() {
+        try { localStorage.setItem(PWA_DONE_KEY, '1'); } catch (_) {}
+        pwaRestoreOpen.value = false;
+        // 即便用户跳过恢复，PWA 模式下也尝试一次性申请通知权限（iOS 加主屏后唯一能拿到通知的入口）
+        _maybeAskPwaNotify();
+      }
+      async function pwaSubmit() {
+        var err = store.utils.validatePhone(pwaPhone.value);
+        if (err) { pwaErr.value = err; return; }
+        pwaErr.value = ''; pwaSubmitting.value = true;
+        try {
+          // 临时 profile（仅 phone）：让 loadMyOrders 能跑；之后从订单反推 name/addresses
+          store.profile = { name: '', phone: String(pwaPhone.value).replace(/\D/g, ''), addresses: [] };
+          await store.loadMyOrders();
+          // 从历史订单反推个人资料 + 地址簿（按 building+room 去重，最近用过的设为默认）
+          var mine = store.state.orders.filter(function (o) { return o.customer && o.customer.phone === store.profile.phone; });
+          mine.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+          if (mine.length) {
+            var seen = {}; var addrs = []; var name = '';
+            mine.forEach(function (o) {
+              if (!name && o.customer && o.customer.name) name = o.customer.name;
+              var b = (o.customer && o.customer.building) || ''; var r = (o.customer && o.customer.room) || '';
+              if (!b) return;
+              var k = b + '|' + r; if (seen[k]) return; seen[k] = 1;
+              addrs.push({ id: 'a' + Date.now() + addrs.length, label: addrs.length ? '其他' : '默认地址', building: b, room: r, isDefault: !addrs.length });
+            });
+            if (addrs.length) {
+              store.profile = { name: name, phone: store.profile.phone, addresses: addrs };
+              store.toastSuccess('✅ 恢复了 ' + mine.length + ' 个历史订单' + (addrs.length ? '，' + addrs.length + ' 个地址' : ''));
+            } else {
+              store.toastSuccess('✅ 恢复了 ' + mine.length + ' 个历史订单');
+            }
+            store._persistProfile && store._persistProfile();
+          } else {
+            store.profile = null; // 没有订单 → 不留半残 profile，让用户走正常首次填资料
+            store.showToast('没找到这个号码的历史订单，可直接点单', 'info');
+          }
+          try { localStorage.setItem(PWA_DONE_KEY, '1'); } catch (_) {}
+          pwaRestoreOpen.value = false;
+          _maybeAskPwaNotify();
+        } catch (e) {
+          pwaErr.value = '恢复失败，请检查网络后重试';
+        } finally { pwaSubmitting.value = false; }
+      }
+      function _maybeAskPwaNotify() {
+        // PWA 内主动申请通知权限（iOS 加主屏后唯一能收到推送的路径）；失败静默
+        try {
+          if (window.notify && window.notify.supported() && window.notify.permission() === 'default' && store.profile) {
+            window.notify.enable('customer', store.profile.phone, { askIfNeeded: true }).catch(function () {});
+          }
+        } catch (_) {}
+      }
+      onMounted(function () {
+        // 仅在 standalone PWA + 还没 profile + 此前没引导过 时弹
+        try {
+          var isStandalone = window.notify && window.notify.isStandalone && window.notify.isStandalone();
+          var done = localStorage.getItem(PWA_DONE_KEY) === '1';
+          if (isStandalone && !store.profile && !done && !ui.preview) {
+            // 稍延迟让 SPA 把首屏渲完，再弹
+            setTimeout(function () { pwaRestoreOpen.value = true; }, 600);
+          } else if (isStandalone && store.profile) {
+            // 已有 profile（用户之前恢复过 / 在 PWA 内填过资料）→ 静默尝试申请通知权限
+            _maybeAskPwaNotify();
+          }
+        } catch (_) {}
+      });
+
+      return { store, ui, cart, open, preorder, needProfile, sheetItem, cartCount, cartTotal, qtyOfItem, stockLeft, addSimple, removeSimple, openSheet, addLine, incLine, decLine, onSubmitted, startNew, showNav, goTab, openHistory, reorder, liveCount, pullDist, pullArea, ptrStart, ptrMove, ptrEnd, pwaRestoreOpen, pwaPhone, pwaErr, pwaSubmitting, pwaDismiss, pwaSubmit };
     },
   };
 
@@ -153,7 +254,7 @@
 
         <!-- 首次访问 / 未选社区 → 弹选择器（强制选才能看商家） -->
         <div class="modal" v-if="showHubPicker" @click.self="dismissPicker">
-          <div class="modal__panel hub-picker">
+          <div class="modal__panel hub-picker" :class="{ 'hub-picker--shake': pickerShake }">
             <div class="hub-picker__title">📍 你在哪个社区？</div>
             <p class="hub-picker__sub">选了社区，才能看到附近的商家。可以随时点顶部切换。</p>
             <div class="hub-picker__list">
@@ -222,8 +323,16 @@
         if (_pickerDismissed.value) return false;
         return true;
       });
-      function pickHub(id) { store.setCurrentHub(id); _pickerDismissed.value = false; }
-      function dismissPicker() { /* 必须选，禁止 dismiss */ }
+      function pickHub(id) { store.setCurrentHub(id); _pickerDismissed.value = false; pickerShake.value = false; }
+      // UX#5: clicking the backdrop should give visual feedback that the modal is mandatory
+      // — without this, the user wonders if their click registered. Brief shake = "no, must pick".
+      const pickerShake = ref(false);
+      var _shakeTimer = null;
+      function dismissPicker() {
+        pickerShake.value = true;
+        if (_shakeTimer) clearTimeout(_shakeTimer);
+        _shakeTimer = setTimeout(function () { pickerShake.value = false; }, 450);
+      }
       function onLocClick() {
         // 顶部 "切换" → 重新选社区
         store.setCurrentHub('');
@@ -240,7 +349,7 @@
         return m.settings.deliveryMode === 'fixed' ? '定时配送' : ('约 ' + m.settings.flexibleMin + '-' + m.settings.flexibleMax + ' 分钟');
       }
       function hasPromo(m) { return m.menu.some((it) => it.available && store.utils.hasDiscount(it)); }
-      return { store, q, editAddr, merchants, filtered, matchedDishes, hubName, locText, deliveryText, hasPromo, showHubPicker, pickHub, dismissPicker, onLocClick };
+      return { store, q, editAddr, merchants, filtered, matchedDishes, hubName, locText, deliveryText, hasPromo, showHubPicker, pickHub, dismissPicker, onLocClick, pickerShake };
     },
   };
 
@@ -262,8 +371,8 @@
             <div class="order-card__top"><span class="order-card__id">{{ shopName(o.merchantId) }}</span><span class="chip" :class="st(o.status).cls">{{ st(o.status).label }}</span></div>
             <div class="order-card__cust">{{ items(o) }}</div>
             <div class="order-card__meta"><span>{{ store.utils.relTime(o.createdAt) }} · {{ o.id }}</span><span>{{ store.utils.rm(o.total) }}</span></div>
-            <div class="sync-note sync-note--go sm" v-if="o.syncStatus==='syncing'"><span class="spin spin--dark"></span> 正在发送给商家…</div>
-            <div class="sync-note sync-note--wait sm" v-else-if="o.syncStatus==='pending'">📶 网络有点慢，请刷新页面再试</div>
+            <!-- syncing 静默不显示：提交时已弹"📤 订单已提交，正在确认…" toast，再挂旋转条会让人误以为没成功 -->
+            <div class="sync-note sync-note--wait sm" v-if="o.syncStatus==='pending'">📶 网络有点慢，请刷新页面再试</div>
             <div class="sync-note sync-note--bad sm" v-else-if="o.syncStatus==='rejected'">❌ 下单未成功，请刷新页面重试</div>
             <div class="card-actions" v-if="o.imgStatus==='failed'" @click.stop><span class="img-sync__tag">⚠ 截图没传上</span><button class="btn btn--sm btn--primary" @click="store.retryOrderShot(o.id)">重新上传</button></div>
           </div>
@@ -304,7 +413,7 @@
         <template v-if="!editing && store.profile">
           <div class="profile-card">
             <div class="profile-card__avatar">{{ store.profile.name.slice(0,1) }}</div>
-            <div><div class="profile-card__name">{{ store.profile.name }}</div><div class="profile-card__sub">{{ store.profile.phone }}</div></div>
+            <div><div class="profile-card__name">{{ store.profile.name }}</div><div class="profile-card__sub">{{ store.utils.displayPhone(store.profile.phone) }}</div></div>
           </div>
           <!-- 地址簿（多地址 + 默认 + 切换） -->
           <div class="card addrbook">
@@ -392,7 +501,9 @@
         <h2 class="form-title">填写收货资料</h2>
         <p class="form-note">只需填一次，本机自动记住，下次免登录直接下单。</p>
         <label class="field"><span>姓名</span><input v-model="form.name" placeholder="例如：陈小明" maxlength="60" /></label>
-        <label class="field"><span>手机号</span><input v-model="form.phone" type="tel" inputmode="numeric" placeholder="例如：0123456789" maxlength="15" /></label>
+        <label class="field field--phone"><span>手机号</span>
+          <div class="phone-input"><span class="phone-input__cc">🇲🇾 +60</span><input v-model="form.phone" type="tel" inputmode="numeric" placeholder="例如：12-345 6789（或 0123456789）" maxlength="15" /></div>
+        </label>
         <div class="field-row">
           <label class="field"><span>配送楼栋</span>
             <select v-if="buildings && buildings.length" class="cat-select" v-model="form.building">
@@ -416,10 +527,26 @@
     `,
     setup(props, { emit }) {
       const ex = store.profile || {};
-      const form = reactive({ name: ex.name || '', phone: ex.phone || '', building: ex.building || '', room: ex.room || '' });
+      // Bug 3 fix: legacy profiles store building/room flat, but saveProfile() migrates to
+      // addresses[]. When reopening "修改地址", ex.building was undefined → form showed empty
+      // even though the user had previously picked A 栋. Read from default address as fallback.
+      var defaultAddr = {};
+      if (Array.isArray(ex.addresses) && ex.addresses.length) {
+        defaultAddr = ex.addresses.find(function (a) { return a.isDefault; }) || ex.addresses[0] || {};
+      }
+      const form = reactive({
+        name: ex.name || '',
+        phone: ex.phone || '',
+        building: ex.building || defaultAddr.building || '',
+        room: ex.room || defaultAddr.room || ''
+      });
       const otherBld = ref('');
-      if (props.buildings && props.buildings.length && ex.building && props.buildings.indexOf(ex.building) < 0) { form.building = '__other__'; otherBld.value = ex.building; }
+      if (props.buildings && props.buildings.length && form.building && props.buildings.indexOf(form.building) < 0) { form.building = '__other__'; otherBld.value = form.building === '__other__' ? (ex.building || defaultAddr.building || '') : form.building; }
       const error = ref('');
+      // Bug 1 fix: clear stale error as soon as the user starts editing any field.
+      // Previously the red "姓名不能为空" lingered after the user filled the name.
+      watch(form, function () { if (error.value) error.value = ''; });
+      watch(otherBld, function () { if (error.value) error.value = ''; });
       // PDPA 同意：localStorage 记录一次接受过的版本，下次不再问
       const TOS_VERSION = 'v1.0';
       const needsConsent = computed(function () { return localStorage.getItem('tt_tos_accepted') !== TOS_VERSION; });
@@ -599,10 +726,21 @@
         return out;
       });
       const unit = computed(() => store.utils.effPrice(props.item) + selected.value.reduce((s, o) => s + (Number(o.price) || 0), 0));
-      const valid = computed(() => (props.item.optionGroups || []).every((g) => !(g.type === 'single' && g.required) || single[g.id]) && props.left > 0);
+      // 必选门控：single-required 必须有选项 + multi-required 必须达到 min（默认 1）
+      // 之前只 gate 了 single，导致「必选多选」组没选也能加购物车
+      const minOf = (g) => (Number(g.min) > 0 ? Number(g.min) : 1);
+      const groupOk = (g) => {
+        if (g.type === 'single' && g.required) return !!single[g.id];
+        if (g.type === 'multi' && g.required) return (multi[g.id] || []).length >= minOf(g);
+        return true;
+      };
+      const valid = computed(() => (props.item.optionGroups || []).every(groupOk) && props.left > 0);
       function confirm() {
-        const miss = (props.item.optionGroups || []).find((g) => g.type === 'single' && g.required && !single[g.id]);
-        if (miss) { err.value = '请选择「' + miss.name + '」'; return; }
+        const groups = props.item.optionGroups || [];
+        const missS = groups.find((g) => g.type === 'single' && g.required && !single[g.id]);
+        if (missS) { err.value = '请选择「' + missS.name + '」'; return; }
+        const missM = groups.find((g) => g.type === 'multi' && g.required && (multi[g.id] || []).length < minOf(g));
+        if (missM) { err.value = '「' + missM.name + '」至少选 ' + minOf(missM) + ' 项'; return; }
         emit('add', { item: props.item, options: selected.value, qty: qty.value });
       }
       return { store, single, multi, qty, err, isSel, toggle, selected, unit, valid, confirm };
@@ -624,7 +762,7 @@
           <span class="co-addr__pin">📍</span>
           <div class="co-addr__body">
             <div class="co-addr__where"><span class="addr-label addr-label--inline" v-if="currentAddr.label">{{ currentAddr.label }}</span>{{ currentAddr.building }} {{ currentAddr.room }}</div>
-            <div class="co-addr__who">{{ store.profile.name }} · {{ store.profile.phone }}</div>
+            <div class="co-addr__who">{{ store.profile.name }} · {{ store.utils.displayPhone(store.profile.phone) }}</div>
           </div>
           <span class="co-addr__edit" v-if="!preview">修改 ›</span>
         </div>
@@ -780,9 +918,14 @@
 
   // ---------- 订单状态（带动效） ----------
   window.OrderStatus = {
-    emits: ['neworder'],
+    emits: ['neworder', 'back'],
     template: `
       <div class="status" v-if="order">
+        <!-- UX#10: back arrow to "订单" list. Only meaningful once the order is in a terminal
+             state (cancelled/rejected/delivered or sync-rejected). During active tracking
+             we leave the page focused on the live status — no escape hatch needed because
+             "再点一单" already exists for terminal cards. -->
+        <button v-if="isTerminal" class="status__back" @click="$emit('back')" aria-label="返回订单列表">‹ 返回订单</button>
         <div class="status__order">{{ merchantName }} · 订单 {{ order.id }} · {{ order.createdAtText }}</div>
 
         <!-- 乐观下单：后端校验未通过（库存/截止/券）→ 整单未成，引导重下 -->
@@ -792,9 +935,8 @@
           <button class="btn btn--primary btn--pill" style="margin-top:14px" @click="$emit('neworder')">返回重新下单</button>
         </div>
         <template v-else>
-        <!-- 乐观下单：后台同步状态（非阻塞，绝不弹中断式报错） -->
-        <div class="sync-note sync-note--go" v-if="order.syncStatus==='syncing'"><span class="spin spin--dark"></span> 正在发送给商家…</div>
-        <div class="sync-note sync-note--wait" v-else-if="order.syncStatus==='pending'">📶 网络有点慢，请刷新页面再试</div>
+        <!-- 乐观下单：syncing 静默（toast 已提示），仅 pending 异常态显示提示 -->
+        <div class="sync-note sync-note--wait" v-if="order.syncStatus==='pending'">📶 网络有点慢，请刷新页面再试</div>
 
         <div class="card status-rejected" v-if="order.status === 'rejected'">
           <div class="status-rejected__icon">❌</div><div class="status-rejected__title">订单未通过</div>
@@ -934,7 +1076,13 @@
         var text = '【' + shop + '】您好，' + head + '。';
         return 'https://wa.me/' + d + '?text=' + encodeURIComponent(text);
       });
-      return { store, order, steps, ci, currentStep, merchantName, cancel, merchantWa };
+      // UX#10: terminal = nothing more will happen to this order — safe to leave.
+      const isTerminal = computed(() => {
+        const o = order.value; if (!o) return false;
+        if (o.syncStatus === 'rejected') return true;
+        return o.status === 'cancelled' || o.status === 'rejected' || o.status === 'delivered';
+      });
+      return { store, order, steps, ci, currentStep, merchantName, cancel, merchantWa, isTerminal };
     },
   };
 })();

@@ -32,8 +32,11 @@ function pickElText(p, sel) {
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const ctx = await browser.newContext({ viewport: { width: 414, height: 896 } });
-  // Pre-seed customer profile so checkout works
+  // Pre-seed customer profile + hub so checkout works.
+  // 'canteen_hub_v1' was added by commit 9a99c8e (mandatory hub picker); without
+  // it, the picker modal blocks every customer click (B1/B3/C1/C7/C8 etc fail).
   await ctx.addInitScript(() => {
+    localStorage.setItem('canteen_hub_v1', 'utm');
     localStorage.setItem('canteen_profile_v4', JSON.stringify({
       name: '测试顾客', phone: '0199999991', building: 'A 栋', room: 'T01'
     }));
