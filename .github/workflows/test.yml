@@ -24,7 +24,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # 不开 npm cache —— 需 package-lock.json，但本仓库特意 .gitignore 排除（playwright 单依赖，
+          # 不值得引入 lock 冲突管理成本）。`npm install` 全装也只 ~10s，缓存收益微不足道。
 
       - name: Setup Python (for http.server)
         uses: actions/setup-python@v5
