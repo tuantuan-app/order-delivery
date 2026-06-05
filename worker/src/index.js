@@ -31,6 +31,13 @@
  *     合计仍 < 6%，距撞墙远得很。
  */
 
+// admin.html 内嵌（wrangler [[rules]] Text loader 把整段 HTML 当字符串导入）
+// 为什么：admin.html 不再放 Pages（避免 https://tuantuan-app.github.io/admin.html 公开可达）。
+// Worker 直接吐这份 bundle 内的副本，仍走 Basic Auth + CSP 注入。
+// 同步策略：root 的 admin.html 是源；wrangler deploy 时 esbuild 把它编进 bundle。
+// admin.html 改动 → 必须 wrangler deploy 才生效（admin.html 本身极少改，logic 在 admin.js）。
+import EMBEDDED_ADMIN_HTML from '../../admin.html';
+
 export default {
   async fetch(req, env) {
     // H20 fix: CORS 白名单（之前 '*' 任意站点都能 fetch 你的 Worker）。
@@ -94,38 +101,33 @@ export default {
           headers: { 'WWW-Authenticate': 'Basic realm="团团 TuanTuan Admin"' },
         });
       }
-      // 从 Pages 取 admin.html，反代时做两件事：
-      //   1. 注入 <base href="...Pages..."> 让相对路径资源走 Pages
-      //   2. 删掉 admin.html 原 CSP <meta>，由 Worker 通过 HTTP 头下发更宽 CSP
-      //      （原 script-src 'self' = workers.dev，会挡掉从 Pages 加载的 JS → 整页白屏）
-      try {
-        const pagesResp = await fetch('https://tuantuan-app.github.io/admin.html');
-        let html = await pagesResp.text();
-        // 删除 admin.html 内嵌 CSP（用 HTTP 头版本替代）
-        html = html.replace(/<meta\s+http-equiv=["']Content-Security-Policy["'][^>]*>\s*/i, '');
-        // 注入 base href
-        html = html.replace('<head>', '<head><base href="https://tuantuan-app.github.io/">');
-        // 通过 HTTP 头下发宽松 CSP（允许 Pages 域名加载脚本/样式/图片/连接）
-        const csp = "default-src 'self' https://tuantuan-app.github.io; "
-                  + "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://tuantuan-app.github.io; "
-                  + "style-src 'self' 'unsafe-inline' https://tuantuan-app.github.io; "
-                  + "img-src 'self' data: blob: https:; "
-                  + "connect-src 'self' https://script.google.com https://*.workers.dev https://*.googleusercontent.com; "
-                  + "font-src 'self' data: https://tuantuan-app.github.io; "
-                  + "object-src 'none'; frame-ancestors 'none'; base-uri 'self' https://tuantuan-app.github.io";
-        return new Response(html, {
-          headers: {
-            'Content-Type': 'text/html;charset=utf-8',
-            'Cache-Control': 'no-cache',
-            'Content-Security-Policy': csp,
-            'X-Content-Type-Options': 'nosniff',
-            'X-Frame-Options': 'DENY',
-            'Referrer-Policy': 'no-referrer',
-          }
-        });
-      } catch (e) {
-        return new Response('Failed to load admin page', { status: 502 });
-      }
+      // admin.html 内嵌在 Worker bundle（不再 fetch Pages），原因：
+      //   Pages 上不再存放 admin.html → tuantuan-app.github.io/admin.html 直接 404
+      // 仍做两件事保持原行为：
+      //   1. 注入 <base href="...Pages..."> 让相对路径 js/admin.js / styles.css 走 Pages
+      //   2. 删 admin.html 原 CSP <meta>（HTTP 头版本更宽，允许从 Pages 加载 JS）
+      let html = EMBEDDED_ADMIN_HTML;
+      html = html.replace(/<meta\s+http-equiv=["']Content-Security-Policy["'][^>]*>\s*/i, '');
+      // 防御性：admin.html 内自带的 "如果在 Pages → 跳 Worker" 守卫现在永远不会触发
+      // （因为不再在 Pages），但留着不删（无害）
+      html = html.replace('<head>', '<head><base href="https://tuantuan-app.github.io/">');
+      const csp = "default-src 'self' https://tuantuan-app.github.io; "
+                + "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://tuantuan-app.github.io; "
+                + "style-src 'self' 'unsafe-inline' https://tuantuan-app.github.io; "
+                + "img-src 'self' data: blob: https:; "
+                + "connect-src 'self' https://script.google.com https://*.workers.dev https://*.googleusercontent.com; "
+                + "font-src 'self' data: https://tuantuan-app.github.io; "
+                + "object-src 'none'; frame-ancestors 'none'; base-uri 'self' https://tuantuan-app.github.io";
+      return new Response(html, {
+        headers: {
+          'Content-Type': 'text/html;charset=utf-8',
+          'Cache-Control': 'no-cache',
+          'Content-Security-Policy': csp,
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY',
+          'Referrer-Policy': 'no-referrer',
+        }
+      });
     }
 
     if (url.pathname === '/health') {

@@ -13,7 +13,10 @@ jobs:
       - name: Copy frontend files
         run: |
           mkdir -p dist
-          cp index.html merchant.html admin.html privacy.html terms.html dist/
+          # admin.html 不再发 Pages（避免 https://tuantuan-app.github.io/admin.html 公开可达）
+          # 由 Worker 内嵌 + Basic Auth 提供 → https://tuantuan-push.keidev.workers.dev/admin
+          # admin.js / admin-test.js / styles 仍发 Pages（Worker 反代时通过 <base href> 引用）
+          cp index.html merchant.html privacy.html terms.html dist/
           cp styles.css styles-crm.css dist/
           cp manifest.webmanifest sw.js dist/
           mkdir -p dist/js dist/vendor

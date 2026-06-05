@@ -26,3 +26,10 @@ enabled = true
 [vars]
 # 公开变量（无密性，可以在这里）
 # 暂无
+
+# admin.html 不再放 Pages（避免公开入口），改由 Worker bundle 内嵌
+# 通过 esbuild text-loader 把 .html 当字符串导入到 src/index.js
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
