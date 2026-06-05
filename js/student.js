@@ -274,7 +274,9 @@
           </div>
         </div>
         <div class="shop-cards">
-          <div class="empty" v-if="!filtered.length">{{ q ? '没有找到匹配的商家或菜品 🔍' : '本社区暂未开通商家' }}</div>
+          <!-- 加载未完成时显示一行轻量提示，避免闪现"暂未开通"（cold load 上 API ~3-5s） -->
+          <div class="empty" v-if="!filtered.length && !store.ui.publicVendorsLoaded && !q"><span class="spin spin--dark"></span> 加载中…</div>
+          <div class="empty" v-else-if="!filtered.length">{{ q ? '没有找到匹配的商家或菜品 🔍' : '本社区暂未开通商家' }}</div>
           <div class="shop-card" :class="{ 'shop-card--closed': !store.isOpen(m) }" v-for="m in filtered" :key="m.id" @click="store.openMerchant(m.id)">
             <div class="shop-card__logo">{{ m.logo }}</div>
             <div class="shop-card__body">

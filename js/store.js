@@ -463,6 +463,9 @@
     myOrdersRefreshing: false,
     myOrdersError: false,
     selectedAddrId: null, // 地址簿当前选中的地址 id（不持久化；空 → 走默认地址）
+    // 客户端首页冷加载状态：未 true 时不显示「本社区暂未开通商家」，避免在 API 返回前
+    // 闪现空状态。loadPublicVendors() 完成（成功/失败）后置 true。
+    publicVendorsLoaded: false,
   });
   const _auth = loadAuth() || {};
   // 在线模式下：localStorage 里没 token = 上次「假登入」残留 → 视为未登录
@@ -525,7 +528,7 @@
     },
     // 在线模式下：从后端拉真实商家列表（已过滤 TEST + 停业），清掉本地硬编码 demo
     async loadPublicVendors() {
-      if (!(window.api && window.api.enabled())) return;
+      if (!(window.api && window.api.enabled())) { ui.publicVendorsLoaded = true; return; }
       try {
         var r = await window.api.listPublicVendors();
         if (r && r.ok && Array.isArray(r.vendors)) {
@@ -562,6 +565,7 @@
           state.merchants = merged;
         }
       } catch (e) {}
+      finally { ui.publicVendorsLoaded = true; }
     },
     hubBuildings(hubId) { var h = state.hubs.find(function (x) { return x.id === hubId; }); return (h && h.buildings) || []; },
     // 配送范围上限 25：商家自己运力管控，避免覆盖整个社区跑不过来
