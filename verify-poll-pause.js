@@ -63,7 +63,9 @@ const { chromium } = require('playwright');
   has(studentSrc, /pollIntervalMs === 0/, '客户端响应 pollIntervalMs=0');
 
   console.log('\n=== 商家端 (merchant.js) ===');
-  has(merchantSrc, /currentInterval = 30000/, '商家端起步默认 30s（对齐后端闲时）');
+  // 起步 8s = 与后端"有 pending 单"间隔对齐 —— 新单要尽快被商家看到（旧版 30s 起步会让新单延迟最多 30s）
+  // 后端 idle 时返回 30s，setInterval 会自适应调高；不再用 30s 起步
+  has(merchantSrc, /currentInterval = 8000/, '商家端起步 8s（保证新单 ≤8s 到位，idle 时自适应调到 30s）');
   has(merchantSrc, /document\.visibilityState === 'hidden'.*return/s, '商家端 poll 内 hidden 时 early return');
   has(merchantSrc, /pollIntervalMs !== undefined && r\.pollIntervalMs !== currentInterval/, '商家端响应 pollIntervalMs 含 0');
   has(merchantSrc, /currentInterval > 0/, '商家端 pollIntervalMs=0 时不启 interval（防御）');

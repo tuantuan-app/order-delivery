@@ -233,43 +233,43 @@ async function snap(p, name) { await p.screenshot({ path: path.join(OUT, name), 
     await page.close(); await ctx.close();
   }
 
-  // ============= 6. 商家端 shotState 5min 阈值 =============
-  console.log('\n=== 6. shotState wait 阈值 = 5min (新单 4min 仍 "wait") ===');
+  // ============= 6. 商家端 shotState 15min 阈值 =============
+  // 阈值从 5min 拉到 15min：弱网客户(3G + GAS 冷启动 + Drive 慢写)实测 p99 上传 ~10min，
+  // 5min 阈值会让商家先看到"⚠ 客户截图未上传"再变成真截图，造成误判/误拒
+  console.log('\n=== 6. shotState wait 阈值 = 15min (10min 仍 wait, 16min 才 missing) ===');
   {
     const ctx = await browser.newContext({ viewport: { width: 414, height: 896 } });
     const page = await ctx.newPage();
     await page.goto(BASE + '/merchant.html?demo', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(500);
-    // 注入：构造 3 个无截图、不同 age 的订单，调用 shotState 直接验阈值
+    // 注入：构造无截图、不同 age 的订单，调用 shotState 直接验阈值
     const results = await page.evaluate(() => {
-      // 假 order
       const NOW = Date.now();
       const make = (ageMs) => ({ screenshot: '', status: 'pending', createdAt: NOW - ageMs });
-      // shotState 是 MOrders setup 内的闭包，不能直接拿。改为复刻同样的判定逻辑跑：
       function shot(o) {
         if (o.screenshot) return 'ok';
         if (o.status === 'rejected' || o.status === 'cancelled') return 'na';
-        return (Date.now() - (Number(o.createdAt) || 0) < 5 * 60 * 1000) ? 'wait' : 'missing';
+        return (Date.now() - (Number(o.createdAt) || 0) < 15 * 60 * 1000) ? 'wait' : 'missing';
       }
       return {
-        a30s: shot(make(30 * 1000)),      // 30s
-        a4min: shot(make(4 * 60 * 1000)), // 4min
-        a6min: shot(make(6 * 60 * 1000)), // 6min
+        a30s: shot(make(30 * 1000)),       // 30s
+        a10min: shot(make(10 * 60 * 1000)),// 10min（弱网 p95）
+        a16min: shot(make(16 * 60 * 1000)),// 16min（超阈值）
       };
     });
     if (results.a30s === 'wait') ok('30s 无截图 → wait');
     else bad(`30s 无截图 → ${results.a30s} (期望 wait)`);
-    if (results.a4min === 'wait') ok('4min 无截图 → wait (新阈值 5min)');
-    else bad(`4min 无截图 → ${results.a4min} (期望 wait，旧 60s 阈值会算 missing)`);
-    if (results.a6min === 'missing') ok('6min 无截图 → missing (超过 5min)');
-    else bad(`6min 无截图 → ${results.a6min} (期望 missing)`);
+    if (results.a10min === 'wait') ok('10min 无截图 → wait (新阈值 15min)');
+    else bad(`10min 无截图 → ${results.a10min} (期望 wait，旧 5min 阈值会算 missing)`);
+    if (results.a16min === 'missing') ok('16min 无截图 → missing (超过 15min)');
+    else bad(`16min 无截图 → ${results.a16min} (期望 missing)`);
 
-    // 顺便 grep 源码确认阈值是 5*60*1000，而不是 60000
+    // grep 源码确认阈值是 15*60*1000
     const src = await page.evaluate(async () => (await fetch('/js/merchant.js')).text());
-    if (src.includes('5 * 60 * 1000') && !src.match(/createdAt[^)]*\)\s*<\s*60000/)) {
-      ok('merchant.js 源码已用 5 * 60 * 1000 替换 60000');
+    if (src.includes('15 * 60 * 1000') && !src.match(/createdAt[^)]*\)\s*<\s*(60000|5 \* 60 \* 1000)\b/)) {
+      ok('merchant.js 源码已用 15 * 60 * 1000 替换旧阈值');
     } else {
-      bad('merchant.js 源码未按预期更新 (找 5 * 60 * 1000 失败 或残留 60000 阈值)');
+      bad('merchant.js 源码未按预期更新 (找 15 * 60 * 1000 失败 或残留旧阈值)');
     }
 
     await page.close(); await ctx.close();

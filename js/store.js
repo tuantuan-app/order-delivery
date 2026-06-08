@@ -337,6 +337,32 @@
   }
 
   // 把后端 Sheet 行映射成前端订单对象
+  // ===== 订单状态机：远端→本地合并保护 =====
+  // 问题：商家/客户在本地乐观改了状态(approve/cancel/...)，但
+  //   (1) sync_ 300ms 防抖 → fetch → GAS 写表 → 边缘缓存失效 整条链路可能 10-30s
+  //   (2) 这期间 poll 拉回的可能还是旧 status → 直接覆盖会把本地状态"倒退"
+  // 老方案：8s 时间窗口保护 _localMutAt —— 网络稍慢就破窗，状态闪回
+  // 新方案：状态机方向校验 —— 远端只能让本地前进(或同状态)，不能倒退；终态(rejected/cancelled/delivered)永远接受
+  //   ordinal: pending=1 < cooking=2 < delivering=3 < terminal(delivered/rejected/cancelled)=4
+  //   一旦本地达到终态，远端的非终态全部拒绝（防止 admin/后端 bug 把订单"复活"）
+  //   保留 _localMutAt 30s 兜底窗口：远端长时间没追上 + 状态相同 → 清戳；状态不同 + 远端在前进 → 接受远端
+  var _STATUS_ORD = { pending: 1, cooking: 2, delivering: 3, delivered: 4, rejected: 4, cancelled: 4 };
+  function _ord(s) { return _STATUS_ORD[s] || 0; }
+  function _isTerminal(s) { return s === 'delivered' || s === 'rejected' || s === 'cancelled'; }
+  // 远端 status 是否应该被接受覆盖本地 status
+  //   - 本地已终态 → 拒绝任何非"同 status"远端（终态一旦达到，不允许倒退/横移）
+  //     例外：远端是同一终态(同 status)→ 接受（幂等）
+  //   - 远端是终态 + 本地非终态 → 接受（任何"商家拒/取消/送达"都立即生效，最高优先级）
+  //   - 远端 ordinal >= 本地 ordinal → 接受（前进或同步）
+  //   - 远端 ordinal < 本地 ordinal → 拒绝（倒退，多为 stale poll/边缘缓存）
+  function _acceptRemoteStatus(localStatus, remoteStatus) {
+    if (!remoteStatus) return false;
+    if (localStatus === remoteStatus) return true;
+    if (_isTerminal(localStatus)) return false; // 本地终态：远端只能"等于"，不能改
+    if (_isTerminal(remoteStatus)) return true; // 远端终态：立即接受
+    return _ord(remoteStatus) >= _ord(localStatus);
+  }
+
   function normalizeRemoteOrder(r) {
     if (!r) return null;
     const items = Array.isArray(r.items) ? r.items.map((it) => ({ id: it.id || '', name: it.name || '', price: Number(it.price) || 0, qty: Number(it.qty) || 1 })) : [];
@@ -447,7 +473,9 @@
   const state = reactive(loadState());
   // 乐观下单：上次会话被打断的中间态，重载后归一——"上传中"图视为失败(可补传)，"同步中"文字回退到 pending(待续传)
   if (Array.isArray(state.orders)) state.orders.forEach(function (o) {
-    if (o.imgStatus === 'uploading') o.imgStatus = 'failed';
+    // 重开页面时上次会话的"传图中/慢"状态都视为待续传(resumePendingSyncs 会重启)；
+    // 'syncing' 文字态也回退到 'pending' 等续传
+    if (o.imgStatus === 'uploading' || o.imgStatus === 'slow') o.imgStatus = 'failed';
     if (o.syncStatus === 'syncing') o.syncStatus = 'pending';
   });
   const ui = reactive({
@@ -867,10 +895,13 @@
     applyRemoteOrder(remote) {
       if (!remote) return;
       var o = this.getOrder(remote.orderId); if (!o) return;
-      // 保护客户端刚点的"取消"：M8 fix 从 8s 延到 15s（高延迟场景下 GAS 响应慢 + 边缘缓存 TTL 叠加可能超 8s）
-      var protect = o._localMutAt && (Date.now() - o._localMutAt) < 15000 && remote.status !== o.status;
-      if (protect) {
-        // 仅同步非冲突字段
+      // 状态机方向校验 + 30s 兜底窗口（统一与 applyVendorOrders 同款逻辑）
+      //   旧版仅 15s 时间窗口 → 慢网超窗后 stale poll 把 cancelled 冲回 pending；
+      //   新版：状态倒退一律拒绝；终态本地一旦达到永不被覆盖。
+      var inFreshWindow = o._localMutAt && (Date.now() - o._localMutAt) < 30000;
+      var statusOk = _acceptRemoteStatus(o.status, remote.status);
+      if (!statusOk || (inFreshWindow && remote.status !== o.status)) {
+        // 拒绝 status 覆盖，仅同步非冲突字段
         if (remote.deliveryPhotoUrl && !o.deliveryPhoto) o.deliveryPhoto = utils.fastDriveImg(remote.deliveryPhotoUrl);
         if (remote.deliveryTime) o.deliveryTime = remote.deliveryTime;
         return;
@@ -891,9 +922,11 @@
     applyVendorOrders(vendorId, remoteOrders) {
       if (!Array.isArray(remoteOrders)) return;
       var mapped = remoteOrders.map(normalizeRemoteOrder).filter(Boolean);
-      // 智能合并：避免在途旧 poll 把刚改的状态冲回去（_localMutAt 8s 保护窗）
-      // 原本 filter+concat 整组替换 → 乐观改完 status='cooking' 后，stale poll 返回 'pending' 会把本地覆盖回去 → 状态闪回
-      var FRESH = 8000, NOW = Date.now();
+      // 智能合并：状态机方向校验 + 30s 兜底窗口（_acceptRemoteStatus）
+      //   旧版只用 8s 时间窗口 → GAS 写表 + 边缘缓存失效经常超 8s，stale poll 把 cooking 冲回 pending → 商家"接单后还能在待处理里看到"
+      //   新版：远端 status 必须 ≥ 本地 status 才覆盖（终态除外，终态远端永远接受、本地永远保留）；
+      //         同时保留 _localMutAt 30s 兜底窗口（远端长时间没追上同样不冲回）
+      var FALLBACK_FRESH = 30000, NOW = Date.now();
       var byId = {}; mapped.forEach(function (m) { byId[m.id] = m; });
       var newList = [], seen = {};
       for (var i = 0; i < state.orders.length; i++) {
@@ -906,15 +939,20 @@
           continue;
         }
         seen[lo.id] = true;
-        if (lo._localMutAt && (NOW - lo._localMutAt) < FRESH && ro.status !== lo.status) {
-          // 保护期内、远端还没追上本地 → 用远端打底但保留本地的 status/rejectReason/deliveryPhoto/_localMutAt
+        var inFreshWindow = lo._localMutAt && (NOW - lo._localMutAt) < FALLBACK_FRESH;
+        var statusOk = _acceptRemoteStatus(lo.status, ro.status);
+        if (!statusOk || (inFreshWindow && ro.status !== lo.status)) {
+          // 拒绝接受远端 status：保留本地 status + rejectReason + deliveryPhoto + 保护戳
+          //   状态机回退、或 30s 兜底窗口内远端还没追上 → 守护本地乐观值
+          //   其它字段（total/items/deliveryTime/customer 等）仍可被远端刷新
           newList.push(Object.assign({}, ro, {
-            status: lo.status, rejectReason: lo.rejectReason,
+            status: lo.status,
+            rejectReason: lo.rejectReason || ro.rejectReason,
             deliveryPhoto: lo.deliveryPhoto || ro.deliveryPhoto,
             _localMutAt: lo._localMutAt
           }));
         } else {
-          // 远端已追上(或保护期已过) → 用远端覆盖，保护戳自然脱落
+          // 状态机允许 + (远端追上 OR 兜底窗口已过) → 用远端覆盖，保护戳自然脱落
           newList.push(ro);
         }
       }
@@ -958,8 +996,10 @@
             var lo = state.orders.find(function (x) { return x.id === so.id; });
             if (lo) {
               var _wd = lo.status === 'delivered';
-              // 保护本地 8s 内的乐观突变(如刚点取消)：远端还没追上时别覆盖 status
-              var protect = lo._localMutAt && (NOW - lo._localMutAt) < 8000 && so.status !== lo.status;
+              // 状态机方向校验 + 30s 兜底窗口（与 applyVendorOrders / applyRemoteOrder 统一）
+              var inFresh = lo._localMutAt && (NOW - lo._localMutAt) < 30000;
+              var statusOk = _acceptRemoteStatus(lo.status, so.status);
+              var protect = !statusOk || (inFresh && so.status !== lo.status);
               if (!protect) {
                 lo.status = so.status; lo.rejectReason = so.rejectReason;
                 if (lo._localMutAt && so.status === lo.status) lo._localMutAt = 0; // 远端追上→清保护
@@ -991,6 +1031,7 @@
         // Drop any lingering toast on cancel so the cancelled state speaks for itself.
         if (toast.visible) { toast.visible = false; if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; } }
         this.sync_({ action: 'cancelOrder', orderId: id });
+        this.toastSuccess('订单已取消');
       }
     },
 
@@ -1006,8 +1047,13 @@
         }) };
         if (!this.profile.addresses.some(function (a) { return a.isDefault; })) this.profile.addresses[0].isDefault = true;
       } else if (prev && Array.isArray(prev.addresses) && prev.addresses.length) {
-        // 已存在地址簿 + 更新 name/phone + building/room（更新默认地址）
+        // 已存在地址簿 + 更新 name/phone + building/room（只改默认地址，其它地址不动）
+        //   Bug fix：旧版用 map 把每条地址的 building/room 都覆盖成同一个值 → 用户有「家/办公室」两条地址，
+        //   编辑资料把办公室改了，结果家也跟着改成办公室地址 → 客户怒投诉
+        //   修法：只改 isDefault===true 那一条；多地址管理走 /我的→配送地址簿 单独操作
+        var hasUpdate = p.building !== undefined || p.room !== undefined;
         var addrs = prev.addresses.map(function (a) {
+          if (!a.isDefault || !hasUpdate) return Object.assign({}, a);
           var updated = Object.assign({}, a);
           if (p.building !== undefined) updated.building = utils.sanitize(p.building, 60);
           if (p.room !== undefined) updated.room = utils.sanitize(p.room, 30);
@@ -1182,33 +1228,64 @@
         if (o.syncStatus === 'pending' || o.syncStatus === 'syncing') {
           self.syncOrder(o.id); // 文字单续传；成功后 syncOrder 内部会顺带 uploadOrderShot
         } else if (o.syncStatus === 'synced' && o.screenshot && /^data:/.test(o.screenshot)
-                   && (o.imgStatus === 'pending' || o.imgStatus === 'uploading' || o.imgStatus === 'failed')) {
+                   && (o.imgStatus === 'pending' || o.imgStatus === 'uploading' || o.imgStatus === 'slow' || o.imgStatus === 'failed')) {
           // 跨会话续传截图：上次没成功的传图自动重试。
-          // 含 'uploading' 卡死自愈：上次正在传时 app 被关 → 15s 定时器没了，重开后会永远卡在"同步中…"。
+          // 含 'uploading'/'slow' 卡死自愈：上次正在传时 app 被关 → 定时器没了，重开后会永远卡在"同步中…"。
           // /^data:/ 区分本地 base64(待传) vs 已落 Drive 的 URL(已传成功)。
           o.imgStatus = 'pending';
           self.uploadOrderShot(o.id, o.screenshot);
         }
       });
     },
-    // 两阶段下单·第二阶段：后台传图，15s 内未成则标记异常单（imgStatus=failed），可补传
+    // 两阶段下单·第二阶段：后台传图
+    //   imgStatus 状态机：
+    //     uploading → (30s 后) slow → (60s 后无响应 / 真正 reject) failed
+    //     uploading → ok（成功）
+    //   旧版只有 15s 直接 failed —— GAS 冷启动 + Drive 慢写时 p95 ~30s，过早判失败：
+    //     ① 用户看到 ⚠ 截图没传上，惊吓 → 点补传 → 同一张图传两次，浪费 GAS/Drive 配额
+    //     ② 商家其实已经在 Sheet 里看到了（首次 fetch 早已落地），但客户端不知道
+    //   新版三态：30s 进 slow（"网络慢…仍在传"），60s 才进 failed；真正后端拒绝(r.ok===false)立刻 failed
+    //   api.js attachScreenshot 已对齐 60s timeout，所以 catch 触发时一定到 failed
     uploadOrderShot(orderId, image) {
       if (!(window.api && window.api.enabled()) || !image) return;
       var o = this.getOrder(orderId); if (!o) return;
       o.imgStatus = 'uploading'; o.screenshot = image;
       var self = this, done = false;
-      var timer = setTimeout(function () { if (done) return; var x = self.getOrder(orderId); if (x && x.imgStatus === 'uploading') x.imgStatus = 'failed'; }, 15000);
+      // 30s 软提示：切到 slow，文案变柔和（不是失败）
+      var slowTimer = setTimeout(function () {
+        if (done) return; var x = self.getOrder(orderId);
+        if (x && x.imgStatus === 'uploading') x.imgStatus = 'slow';
+      }, 30000);
+      // 60s 兜底：若还没回响（理论上 api 自己 60s 超时已让 .catch 触发），保险给到 failed
+      var failTimer = setTimeout(function () {
+        if (done) return; var x = self.getOrder(orderId);
+        if (x && (x.imgStatus === 'uploading' || x.imgStatus === 'slow')) x.imgStatus = 'failed';
+      }, 60000);
       window.api.attachScreenshot(orderId, image).then(function (r) {
-        done = true; clearTimeout(timer); var x = self.getOrder(orderId); if (!x) return;
-        if (r && r.ok) { x.imgStatus = 'ok'; if (r.screenshotUrl) x.screenshot = utils.fastDriveImg(r.screenshotUrl); } else { x.imgStatus = 'failed'; }
-      }).catch(function () { done = true; clearTimeout(timer); var x = self.getOrder(orderId); if (x) x.imgStatus = 'failed'; });
+        done = true; clearTimeout(slowTimer); clearTimeout(failTimer);
+        var x = self.getOrder(orderId); if (!x) return;
+        if (r && r.ok) { x.imgStatus = 'ok'; if (r.screenshotUrl) x.screenshot = utils.fastDriveImg(r.screenshotUrl); }
+        else { x.imgStatus = 'failed'; }
+      }).catch(function () {
+        done = true; clearTimeout(slowTimer); clearTimeout(failTimer);
+        var x = self.getOrder(orderId); if (x) x.imgStatus = 'failed';
+      });
     },
     retryOrderShot(orderId) { var o = this.getOrder(orderId); if (o && o.screenshot) this.uploadOrderShot(orderId, o.screenshot); },
 
     // 状态流转
     // 商家端的乐观状态变更：盖 _localMutAt 时间戳，避免在途的旧 poll 把刚改的状态冲回去（见 applyVendorOrders 的保护窗）
     // C2 fix: status guards prevent invalid transitions
-    approveOrder(id) { var o = this.getOrder(id); if (o && o.status === 'pending') { o.status = 'cooking'; o._localMutAt = Date.now(); try { window.merchantRinger && window.merchantRinger.stop(id); } catch (_) {} this.sync_({ action: 'updateOrderStatus', orderId: id, status: 'cooking' }); } },
+    approveOrder(id) {
+      var o = this.getOrder(id);
+      if (o && o.status === 'pending') {
+        o.status = 'cooking'; o._localMutAt = Date.now();
+        try { window.merchantRinger && window.merchantRinger.stop(id); } catch (_) {}
+        this.sync_({ action: 'updateOrderStatus', orderId: id, status: 'cooking' });
+        // 动作反馈：避免商家点完按钮以为没生效（弹窗仍开，看不出状态变化）
+        this.toastSuccess('✅ 已接单 ' + id + '，开始备餐');
+      }
+    },
     rejectOrder(id, reason) {
       var o = this.getOrder(id);
       if (o && o.status === 'pending') {
@@ -1227,10 +1304,21 @@
           }
         }
         this.sync_({ action: 'updateOrderStatus', orderId: id, status: 'rejected', rejectReason: o.rejectReason });
+        this.toastSuccess('已拒绝订单 ' + id);
       }
     },
     // C2 fix: advanceOrder only from cooking→delivering→delivered (pending must go through approveOrder)
-    advanceOrder(id) { var o = this.getOrder(id); if (!o) return; var f = ['cooking', 'delivering', 'delivered']; var i = f.indexOf(o.status); if (i >= 0 && i < f.length - 1) { o.status = f[i + 1]; o._localMutAt = Date.now(); this.sync_({ action: 'updateOrderStatus', orderId: id, status: o.status, deliveryPhoto: o.status === 'delivered' ? o.deliveryPhoto : '' }); } },
+    advanceOrder(id) {
+      var o = this.getOrder(id); if (!o) return;
+      var f = ['cooking', 'delivering', 'delivered']; var i = f.indexOf(o.status);
+      if (i >= 0 && i < f.length - 1) {
+        o.status = f[i + 1]; o._localMutAt = Date.now();
+        this.sync_({ action: 'updateOrderStatus', orderId: id, status: o.status, deliveryPhoto: o.status === 'delivered' ? o.deliveryPhoto : '' });
+        // 动作反馈：每一步推进都给商家清楚回响
+        var verbs = { cooking: '备餐中', delivering: '开始配送', delivered: '已送达' };
+        this.toastSuccess('✅ ' + (verbs[o.status] || o.status) + ' · ' + id);
+      }
+    },
     setDeliveryPhoto(id, d) { var o = this.getOrder(id); if (o) { o.deliveryPhoto = d; o._localMutAt = Date.now(); if (d) this.sync_({ action: 'updateOrderStatus', orderId: id, status: o.status, deliveryPhoto: d }); } },
     // 批量送达：一批订单一次性标记已送达，并共用同一张到货照片（同地点多客户，不必逐个拍照发）
     batchDeliver(ids, photo) {

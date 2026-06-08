@@ -131,7 +131,7 @@
           <div class="order-card__meta"><span>{{ o.items.reduce((s,i)=>s+i.qty,0) }} 件 · {{ store.utils.rm(o.total) }}</span><span>🕒 {{ o.deliveryTime }}</span></div>
           <div class="order-card__remark" v-if="o.remark">📝 {{ o.remark }}</div>
           <div class="order-card__shot" v-if="shotState(o).key==='wait'">⏳ 支付截图上传中…</div>
-          <div class="order-card__shot order-card__shot--bad" v-else-if="shotState(o).key==='missing'">⚠ 客户截图未上传</div>
+          <div class="order-card__shot order-card__shot--bad" v-else-if="shotState(o).key==='missing'">⚠ 客户截图还没传上（可能仍在传，下拉刷新或联系客户）</div>
           <div class="card-actions" v-if="o.status==='pending'" @click.stop>
             <button class="btn btn--sm btn--danger" @click="askReject(o)">拒绝</button>
             <button class="btn btn--sm btn--primary" @click="store.approveOrder(o.id)">同意做菜</button>
@@ -289,19 +289,28 @@
           revenue: os.filter((o) => o.status === 'delivered').reduce((s, o) => s + (o.total || 0), 0),
         };
       });
-      // v4: 自适应轮询 + 隐藏暂停 + 起步对齐后端闲时（30s）—— 省 GAS 配额
-      //   起步 30s = 后端 getVendorOrders 在"全闲"时返回的间隔（line 879）
-      //   有 pending 单时后端会拉到 8s；首次响应 1 tick 内对齐，不再无脑 15s 起步
+      // v4: 自适应轮询 + 隐藏暂停 —— 省 GAS 配额
+      //   起步 8s = 与后端"有 pending 时"间隔对齐，保证新单 ≤8s 到位
+      //     之前起步 30s：商家页面刚开 30s 内来的新单，最长要等 30s 才显示 → 错过黄金接单期
+      //     后端会自适应：无 pending 时回 30s（getVendorOrders pollIntervalMs），跟着调
+      //   弹窗打开时仍照常 poll（不再 `if (current.value) return`）：
+      //     之前商家点开 A 单看截图时，B/C/D 进单全部被吞掉
+      //     现在 poll 后用 id 重新指向最新对象，弹窗内容跟着刷新；用户感知：实时
       //   tab 隐藏（锁屏/切 app/换 tab）立即暂停 setInterval，可见再 poll 一次重启
-      let timer = null; let polling = false; let currentInterval = 30000;
+      let timer = null; let polling = false; let currentInterval = 8000;
       async function poll() {
-        if (current.value || polling || !(window.api && window.api.enabled())) return;
+        if (polling || !(window.api && window.api.enabled())) return;
         if (document.visibilityState === 'hidden') return; // 后台不烧 GAS
         polling = true;
         try {
           const r = await window.api.getVendorOrders(ui.merchantId, store.auth.token);
           if (r && r.ok) {
+            const openId = current.value && current.value.id;
             store.applyVendorOrders(ui.merchantId, r.orders);
+            // 弹窗打开时：用 orderId 重新指向最新对象，确保弹窗里的字段(status/screenshot/...)跟着 poll 刷新
+            //   不重指：current.value 是旧对象引用 → applyVendorOrders 重建 state.orders 数组后弹窗显示过期数据
+            //   订单从远端消失(被 admin 删等极端情况)：current.value=null → modal 自动关闭
+            if (openId) current.value = store.getOrder(openId) || null;
             if (r.pollIntervalMs !== undefined && r.pollIntervalMs !== currentInterval) {
               currentInterval = r.pollIntervalMs;
               if (timer) clearInterval(timer);
@@ -356,13 +365,15 @@
       function batchDeliverGo() { if (!batchSel.length) return; var n = batchSel.length; if (!window.confirm('确认将 ' + n + ' 个订单标记为已送达？此操作不可撤回。')) return; store.batchDeliver(batchSel.slice(), batchPhoto.value); store.toastSuccess('已送达 ' + n + ' 单' + (batchPhoto.value ? '，到货照片已发给这些客户' : '')); batchSel.splice(0); batchPhoto.value = ''; batchOpen.value = false; }
       function batchCopyGo() { var m = store.merchant; var shop = m ? m.name : '商家'; var t = '【' + shop + '】您的订单已送达 🎉 请查收，感谢惠顾！'; if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { store.toastSuccess('群发文案已复制'); }, function () { window.prompt('复制群发文案：', t); }); else window.prompt('复制群发文案：', t); }
       function st(s) { return STATUS_TEXT[s] || { label: s, cls: '' }; }
-      // 两阶段下单：截图为空时，默认按"还在上传"处理；只有真正超龄(>5min)才提示客户没传上
-      //   - 旧阈值 60s 在慢网下经常误判，让商家以为客户没传 → 改 5min 给慢网/大图压缩留足余量
-      //   - 客户端 imgStatus='uploading' 本地状态后端拿不到，所以这里靠"订单创建时间"近似推断
+      // 两阶段下单：截图为空时，默认按"还在上传"处理
+      //   - 老阈值 5min 在 3G/弱信号 + GAS 冷启动 + Drive 慢写下仍可能误判（实测 p99 ~10min）
+      //   - 客户端 imgStatus='uploading'/'slow' 本地状态后端拿不到，所以这里靠"订单创建时间"近似推断
+      //   - 改 15min（与客户端 uploadOrderShot 60s 兜底 + retry 续传链路对齐留余量），
+      //     真正超过 15min 还没截图 → 大概率客户跑了或断网了，才提示商家
       function shotState(o) {
         if (o.screenshot) return { key: 'ok' };
         if (o.status === 'rejected' || o.status === 'cancelled') return { key: 'na' };
-        return (Date.now() - (Number(o.createdAt) || 0) < 5 * 60 * 1000) ? { key: 'wait' } : { key: 'missing' };
+        return (Date.now() - (Number(o.createdAt) || 0) < 15 * 60 * 1000) ? { key: 'wait' } : { key: 'missing' };
       }
       // 通知客户（WhatsApp wa.me 免费跳转 / 复制文案）。大马号 0xxx → 60xxx
       function waPhone(p) { var d = String(p || '').replace(/\D/g, ''); if (!d) return ''; if (d.charAt(0) === '0') d = '60' + d.slice(1); else if (d.slice(0, 2) !== '60' && d.length <= 10) d = '60' + d; return d; }
@@ -642,12 +653,15 @@
         </div>
 
         <!-- 客户联系号码（WhatsApp） -->
+        <!-- 加归一化预览：用户输入后立即显示"客户看到的格式"+"wa.me 链接"，避免怀疑值被截 -->
         <div class="card">
           <div class="card__label">💬 客户 WhatsApp 联系号 <span class="muted sm">客户在订单页可一键 wa.me 找你</span></div>
           <div class="ring-row">
             <span>WhatsApp 号</span>
-            <input type="tel" v-model="store.merchant.settings.waNumber" placeholder="例：0123456789（大马号自动加 60）" style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--line,#e5e7eb);border-radius:6px" />
+            <input type="tel" inputmode="numeric" maxlength="20" v-model="store.merchant.settings.waNumber" @blur="normalizeWa" placeholder="例：0123456789（大马号自动加 60）" style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--line,#e5e7eb);border-radius:6px" />
           </div>
+          <p class="muted sm" v-if="waPreview.ok" style="color:var(--green-d)">✓ 客户将看到：<b>{{ waPreview.display }}</b> · 点击跳 <code style="font-size:11px">wa.me/{{ waPreview.intl }}</code></p>
+          <p class="muted sm" v-else-if="store.merchant.settings.waNumber" style="color:#d97706">⚠ {{ waPreview.err }}（{{ waPreview.digits }} 位）— 客户点击不会跳转</p>
           <p class="muted sm">留空则客户端不展示「联系商家」按钮。这只是一个 wa.me 跳转链接，不会自动发送消息。</p>
         </div>
 
@@ -720,7 +734,31 @@
       function delQR(q) { if (window.confirm('删除收款码「' + q.label + '」？')) store.removePayQR(store.merchant.id, q.id); }
       const newBld = ref('');
       function addBld() { var n = (newBld.value || '').trim(); if (n) { store.addBuildingToHub(store.merchant.id, n); newBld.value = ''; } }
-      return { store, weekdays, reset, onQR, delQR, newBld, addBld, testRing };
+      // waNumber 归一化 + 预览：用户输完失焦时把内容压成纯数字、超 15 位截断并 toast
+      //   解决两个隐患：① 误输入空格/横杠/字母 ② 输入超长被静默存（用户怀疑"页面把号码截断了"）
+      function normalizeWa() {
+        var m = store.merchant; if (!m) return;
+        var raw = String(m.settings.waNumber || '');
+        var d = raw.replace(/\D/g, '');
+        if (d.length > 15) {
+          store.toastError && store.toastError('手机号位数过多，已截到前 15 位');
+          d = d.slice(0, 15);
+        }
+        // 仅当真的有变化才写回（v-model 已经把同值写回会触发 watch → sync 后端，浪费一次 saveVendorConfig）
+        if (d !== raw) m.settings.waNumber = d;
+      }
+      // 预览：把 store.utils.waPhone / displayPhone 复用到当前 waNumber，做即时回显
+      //   ok=true → 显示 "+60 16-510 1001 · wa.me/60165101001"
+      //   ok=false → 红字提示位数不对，避免商家以为保存了
+      const waPreview = computed(function () {
+        var raw = (store.merchant && store.merchant.settings && store.merchant.settings.waNumber) || '';
+        var d = String(raw).replace(/\D/g, '');
+        if (!d) return { ok: false, digits: 0, err: '请输入号码' };
+        if (d.length < 7) return { ok: false, digits: d.length, err: '位数过短（至少 7 位）' };
+        if (d.length > 15) return { ok: false, digits: d.length, err: '位数过长（最多 15 位）' };
+        return { ok: true, display: store.utils.displayPhone(d), intl: store.utils.waPhone(d) };
+      });
+      return { store, weekdays, reset, onQR, delQR, newBld, addBld, testRing, normalizeWa, waPreview };
     },
   };
 })();

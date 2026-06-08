@@ -88,7 +88,7 @@ window.api = {
   removeHubBuilding(hubId, name, token) { return this.post({ action: 'removeHubBuilding', hubId, name, token }); },
   saveHubBuildings(hubId, buildings, token) { return this.post({ action: 'saveHubBuildings', hubId, buildings, token }); },
   placeOrder(order) { return this.post({ action: 'placeOrder', order }, 25000); }, // 阶段1：仅文字，秒回 orderId
-  attachScreenshot(orderId, image) { return this.post({ action: 'attachScreenshot', orderId, screenshot: image }, 20000); }, // 阶段2：后台补传截图
+  attachScreenshot(orderId, image) { return this.post({ action: 'attachScreenshot', orderId, screenshot: image }, 60000); }, // 阶段2：后台补传截图(慢网+Drive冷启动 p95 ~40s，给 60s 余量)
   cancelOrder(orderId) { return this.post({ action: 'cancelOrder', orderId }); },
   getOrder(orderId) {
     return this._dedupe('getOrder_' + orderId, function () { return window.api.post({ action: 'getOrder', orderId }); });

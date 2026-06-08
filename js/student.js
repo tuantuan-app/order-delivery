@@ -66,7 +66,7 @@
             <div class="modal__head"><span>📱 欢迎回到团团</span><button class="link-btn" @click="pwaDismiss">稍后</button></div>
             <p class="muted sm" style="margin:6px 0 12px">首次在桌面 App 打开？输入你之前下单用的手机号，自动恢复历史订单和地址。</p>
             <label class="field field--phone"><span>手机号</span>
-              <div class="phone-input"><span class="phone-input__cc">🇲🇾 +60</span><input v-model="pwaPhone" type="tel" inputmode="numeric" placeholder="12-345 6789（或 0123456789）" maxlength="15" /></div>
+              <div class="phone-input"><span class="phone-input__cc">🇲🇾 +60</span><input v-model="pwaPhone" type="tel" inputmode="numeric" placeholder="12-345 6789（或 0123456789）" maxlength="20" /></div>
             </label>
             <p class="error" v-if="pwaErr">{{ pwaErr }}</p>
             <button class="btn btn--primary btn--block" :disabled="pwaSubmitting" @click="pwaSubmit">{{ pwaSubmitting ? '正在恢复…' : '恢复' }}</button>
@@ -376,7 +376,8 @@
             <!-- syncing 静默不显示：提交时已弹"📤 订单已提交，正在确认…" toast，再挂旋转条会让人误以为没成功 -->
             <div class="sync-note sync-note--wait sm" v-if="o.syncStatus==='pending'">📶 网络有点慢，请刷新页面再试</div>
             <div class="sync-note sync-note--bad sm" v-else-if="o.syncStatus==='rejected'">❌ 下单未成功，请刷新页面重试</div>
-            <div class="card-actions" v-if="o.imgStatus==='failed'" @click.stop><span class="img-sync__tag">⚠ 截图没传上</span><button class="btn btn--sm btn--primary" @click="store.retryOrderShot(o.id)">重新上传</button></div>
+            <div class="card-actions" v-if="o.imgStatus==='slow'" @click.stop><span class="img-sync__tag muted">⏳ 截图传送中…</span></div>
+            <div class="card-actions" v-else-if="o.imgStatus==='failed'" @click.stop><span class="img-sync__tag">⚠ 截图没传上</span><button class="btn btn--sm btn--primary" @click="store.retryOrderShot(o.id)">重新上传</button></div>
           </div>
         </template>
         <template v-if="past.length"><div class="cat-group__title">历史订单</div>
@@ -504,8 +505,10 @@
         <p class="form-note">只需填一次，本机自动记住，下次免登录直接下单。</p>
         <label class="field"><span>姓名</span><input v-model="form.name" placeholder="例如：陈小明" maxlength="60" /></label>
         <label class="field field--phone"><span>手机号</span>
-          <div class="phone-input"><span class="phone-input__cc">🇲🇾 +60</span><input v-model="form.phone" type="tel" inputmode="numeric" placeholder="例如：12-345 6789（或 0123456789）" maxlength="15" /></div>
+          <div class="phone-input"><span class="phone-input__cc">🇲🇾 +60</span><input v-model="form.phone" @blur="normalizePhone" type="tel" inputmode="numeric" placeholder="例如：12-345 6789（或 0123456789）" maxlength="20" /></div>
         </label>
+        <p class="muted sm field-hint" v-if="phonePreview.ok" style="margin-top:-6px;color:var(--green-d)">✓ 将存为 <b>{{ phonePreview.display }}</b></p>
+        <p class="muted sm field-hint" v-else-if="form.phone" style="margin-top:-6px;color:#d97706">⚠ {{ phonePreview.err }}（{{ phonePreview.digits }} 位）</p>
         <div class="field-row">
           <label class="field"><span>配送楼栋</span>
             <select v-if="buildings && buildings.length" class="cat-select" v-model="form.building">
@@ -549,6 +552,23 @@
       // Previously the red "姓名不能为空" lingered after the user filled the name.
       watch(form, function () { if (error.value) error.value = ''; });
       watch(otherBld, function () { if (error.value) error.value = ''; });
+      // 手机号失焦归一化：剥非数字 + 实时回显「将存为 +60 16-510 1001」
+      //   避免用户被 iOS Safari 自动补全 / 误输入空格 / 怀疑被截断（之前曾有 "存了 01651" 的疑虑）
+      //   maxlength 提到 20 给输入余量（含格式符），归一后再校验 7-15 位
+      function normalizePhone() {
+        var raw = String(form.phone || '');
+        var d = raw.replace(/\D/g, '');
+        if (d.length > 15) d = d.slice(0, 15);
+        if (d !== raw) form.phone = d;
+      }
+      const phonePreview = computed(function () {
+        var raw = String(form.phone || '');
+        var d = raw.replace(/\D/g, '');
+        if (!d) return { ok: false, digits: 0, err: '请输入号码' };
+        if (d.length < 7) return { ok: false, digits: d.length, err: '位数过短，至少 7 位' };
+        if (d.length > 15) return { ok: false, digits: d.length, err: '位数过长，最多 15 位' };
+        return { ok: true, digits: d.length, display: store.utils.displayPhone(d) };
+      });
       // PDPA 同意：localStorage 记录一次接受过的版本，下次不再问
       const TOS_VERSION = 'v1.0';
       const needsConsent = computed(function () { return localStorage.getItem('tt_tos_accepted') !== TOS_VERSION; });
@@ -570,7 +590,7 @@
         } catch (_) {}
         error.value = ''; store.saveProfile({ name: form.name, phone: form.phone, building: building, room: form.room }); emit('done');
       }
-      return { form, error, submit, otherBld, needsConsent, agreed };
+      return { form, error, submit, otherBld, needsConsent, agreed, normalizePhone, phonePreview, store };
     },
   };
 
@@ -979,7 +999,9 @@
         </div>
 
         <!-- 两阶段下单：支付截图后台同步状态 -->
+        <!-- uploading (0-30s)：正常态文案；slow (30-60s)：柔和"还在传"，避免吓到用户；failed (60s+/真错)：才提示补传 -->
         <div class="card img-sync img-sync--wait" v-if="order.imgStatus==='uploading'"><span class="spin spin--dark"></span> 支付截图上传中…（订单已发给商家，无需等待）</div>
+        <div class="card img-sync img-sync--wait" v-else-if="order.imgStatus==='slow'"><span class="spin spin--dark"></span> 网络慢了点，截图还在传…（仍在后台尝试，不用关页面）</div>
         <div class="card img-sync img-sync--fail" v-else-if="order.imgStatus==='failed'">
           <div class="img-sync__t">⚠ 支付截图没传上</div>
           <p class="muted sm">网络有点慢，商家还没看到你的付款凭证，请补传。</p>
